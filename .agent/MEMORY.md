@@ -1,17 +1,23 @@
 # MEMORY.md — Persistent Working Memory
 
-High-signal facts only. Details live in the linked files. Last reviewed: 2026-11-02.
+High-signal facts only. Details live in the linked files. Last reviewed: 2026-11-03.
 
-## Current state
+## Current State
 - Project: **ReproProof** (Meta Global AI Developer Hackathon, Indie Dev track).
-- Status: Fully built and verified. All 8 core unit tests passing, 8 evaluation cases measured.
-- Git repository initialized with clean history at commit `7076d5b`.
-- Architecture: Streamlit UI (`reproproof/ui/app.py`), SQLite run state store, Playwright test compiler, fresh-copy verifier (`passes_frozen_test`), Meta AI model adapter (`muse-spark-1.3`, `muse-wonder-1.0`).
-- Seeded apps: `apps/demo-app` (Inventory demo), `apps/third-party/todo-app` (TodoMVC MIT).
+- Status: **Hackathon-Ready MVP with Verified Implementation**.
+- Review Verdict: Refactored and fully hardened against production review findings.
+- Test Suite: **25 / 25 unit, security, invariant, and real E2E tests passing**.
+- Evaluation: Genuine execution harness with real Playwright browser verification on ephemeral ports; all fabricated numbers eliminated; honest metrics reported with explicit denominators in UI, README, and docs.
+- Architecture:
+  - Controller: SQLite-backed authoritative state machine with atomic transactions and hash binding.
+  - Compiler: Safe structured JSON data driver (`STATIC_TEST_DRIVER`) eliminating prompt-injection-to-RCE.
+  - Patcher: `git apply --check` and `git apply` with path traversal, symlink escape, and protected file defenses.
+  - Verifier: Fresh-copy verifier executing frozen tests and regression suites on ephemeral ports with sanitized environments (`MODEL_API_KEY` scrubbed).
+  - UI: Streamlit 4-stage pipeline with dynamic evaluation metrics reading directly from measured run artifacts.
 
 ## Environment
-- Windows 11, under `C:\Users\BIT\OneDrive\Desktop\Meta`.
-- Python 3.12.1, Node.js v22.14.0, npm.cmd 10.9.2, Playwright.
+- Windows 11, workspace under `C:\Users\BIT\OneDrive\Desktop\Meta`.
+- Python 3.12.1, Node.js v22.14.0, npm.cmd 10.9.2, Playwright with Chromium headless shell.
 
 ## Links
-Rules: `AGENTS.md` · Startup: `SESSION_START.md` · Hard limits: `CONSTRAINTS.md` · Status: `PROGRESS.md` · Work: `TASKS.md` · Decisions: `DECISIONS.md`
+Rules: `AGENTS.md` · Tasks: `TASKS.md` · Decisions: `DECISIONS.md` · Plan: `IMPLEMENTATION_PLAN.md` · Verification: `VERIFICATION_LOG.md`

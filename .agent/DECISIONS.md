@@ -78,3 +78,33 @@ Option 1. Implement the modular `reproproof` structure according to the PRD cont
 ### Consequences
 - All run states and artifacts are tracked in SQLite and file-based bundles.
 - Model adapters will support both live Meta API (`https://api.meta.ai/v1`) and mock mode for testing without secrets.
+
+---
+
+## DEC-003: Remediate Review Findings with Secure Structured Test Driver, Git Apply, and Evidence-Gated State Machine
+Date: 2026-11-03
+Status: Accepted
+
+### Context / Problem
+An independent review marked ReproProof NOT PRODUCTION READY due to:
+1. Prompt-injection-to-RCE vulnerability in test compiler string interpolation.
+2. Unsafe custom patch heuristics with blind line-deletion fallback.
+3. Controller permitting unverified state transitions.
+4. Fabricated benchmark evaluation results.
+5. Fragile hardcoded ports and environment leakage in runner/verifier.
+
+### Options Considered
+1. Patch ad-hoc string regexes and heuristics.
+2. Re-architect compiler to use a fixed, static Playwright driver that loads a validated JSON action plan (eliminating string-to-code execution entirely); use `git apply` with strict boundary checks; require verified cryptographic/execution evidence in the controller before `passes_frozen_test`; use ephemeral ports and sanitize process environments; execute real tests in evals and remove all fabricated metrics.
+
+### Decision
+Option 2. Implement robust architectural defenses:
+- Safe structured serialization: The Playwright test script will consist of a fixed, static driver template that receives a validated JSON payload. No model-generated strings are ever interpolated into JS code or comments.
+- Secure patch application: Use `git apply --check` and `git apply` on the temporary clone, with pre-validation rejecting directory traversal, symlinks, absolute paths, and protected files.
+- Controller evidence gate: `PASSES_FROZEN_TEST` can only be transitioned by submitting a signed/validated `VerificationResult` verifying byte-identical SHA-256 and zero exit codes.
+- Real execution: Remove all manufactured numbers. Run genuine Playwright tests against `inventory-demo` on ephemeral ports.
+
+### Consequences
+- Eliminates the RCE attack surface.
+- Ensures patch integrity.
+- Restores complete honesty and credibility to the project.

@@ -1,83 +1,80 @@
-"""Action Plan to Playwright JavaScript/TypeScript Compiler.
+"""Action Plan to Playwright JavaScript Test Compiler.
 
-Compiles validated ActionPlan models into standalone, reproducible Playwright tests.
-Enforces R3: Allowed actions only, strict escaping, and explicit assertion markers.
+Security Invariant: Safe Structured Data Serialization.
+Model outputs are NEVER interpolated into executable JavaScript source or comments.
+Instead, the compiler embeds the validated ActionPlan as pure JSON data within
+a fixed, audited static Playwright driver loop.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
-import re
 from typing import Tuple
-from reproproof.core.schemas import ActionPlan, ActionStep
-
-
-def escape_js_string(s: str) -> str:
-    """Escapes strings for safe embedding in JavaScript code."""
-    return json.dumps(s)
+from reproproof.core.schemas import ActionPlan
 
 
 class PlaywrightCompiler:
-    """Compiles an ActionPlan into a Playwright test script."""
+    """Compiles an ActionPlan into an immutable, data-driven Playwright test."""
 
-    def compile_step(self, step: ActionStep, step_idx: int) -> str:
-        """Translates an ActionStep into a Playwright statement."""
-        action = step.action
+    STATIC_TEST_DRIVER = """// Auto-generated frozen test driver by ReproProof compiler
+// Security Invariant: Plan is data-driven JSON, never dynamically evaluated code.
+const { test, expect } = require('@playwright/test');
 
-        if action == "goto":
-            path = step.path or "/"
-            if not path.startswith("/"):
-                path = "/" + path
-            return f"  // Step {step_idx}: goto\n  await page.goto(baseURL + {escape_js_string(path)});\n"
+const PLAN = JSON.parse(__PLAN_JSON_LITERAL__);
 
-        if action == "click":
-            if step.role and step.name:
-                role_lit = escape_js_string(step.role)
-                name_lit = escape_js_string(step.name)
-                return f"  // Step {step_idx}: click role {step.role} name {step.name}\n  await page.getByRole({role_lit}, {{ name: {name_lit} }}).click();\n"
-            elif step.name:
-                name_lit = escape_js_string(step.name)
-                return f"  // Step {step_idx}: click text\n  await page.getByText({name_lit}).click();\n"
-            elif step.selector:
-                sel_lit = escape_js_string(step.selector)
-                return f"  // Step {step_idx}: click selector\n  await page.locator({sel_lit}).click();\n"
-            else:
-                raise ValueError(f"Step {step_idx}: click requires role+name, name, or selector.")
+test('__TEST_NAME__', async ({ page, baseURL }) => {
+  // Reset state before running reproduction if available
+  try {
+    await page.request.post(`${baseURL}/api/reset`);
+  } catch (e) {}
 
-        if action == "fill":
-            sel_lit = escape_js_string(step.selector or "")
-            val_lit = escape_js_string(step.value or "")
-            return f"  // Step {step_idx}: fill\n  await page.locator({sel_lit}).fill({val_lit});\n"
+  // 1. Execute Action Steps
+  for (let i = 0; i < PLAN.steps.length; i++) {
+    const step = PLAN.steps[i];
+    if (step.action === 'goto') {
+      const targetUrl = new URL(step.path || '/', baseURL).toString();
+      await page.goto(targetUrl);
+    } else if (step.action === 'click') {
+      if (step.role && step.name) {
+        await page.getByRole(step.role, { name: step.name }).first().click();
+      } else if (step.name) {
+        await page.getByText(step.name).first().click();
+      } else if (step.selector) {
+        await page.locator(step.selector).first().click();
+      }
+    } else if (step.action === 'fill') {
+      await page.locator(step.selector).first().fill(step.value || '');
+    } else if (step.action === 'select') {
+      await page.locator(step.selector).first().selectOption(step.value || '');
+    }
+  }
 
-        if action == "select":
-            sel_lit = escape_js_string(step.selector or "")
-            val_lit = escape_js_string(step.value or "")
-            return f"  // Step {step_idx}: select\n  await page.locator({sel_lit}).selectOption({val_lit});\n"
+  // 2. Capture Screenshot of Defect State
+  if (PLAN.screenshot_path) {
+    await page.screenshot({ path: PLAN.screenshot_path, fullPage: true });
+  }
 
-        # Assertions
-        if action == "assert_text_visible":
-            text_lit = escape_js_string(step.text or "")
-            return f"  // Assertion {step_idx}: assert_text_visible\n  // [INTENDED_ASSERTION: {step.action} text={step.text}]\n  await expect(page.getByText({text_lit})).toBeVisible();\n"
-
-        if action == "assert_text_hidden":
-            text_lit = escape_js_string(step.text or "")
-            return f"  // Assertion {step_idx}: assert_text_hidden\n  // [INTENDED_ASSERTION: {step.action} text={step.text}]\n  await expect(page.getByText({text_lit})).toBeHidden();\n"
-
-        if action == "assert_element_visible":
-            sel_lit = escape_js_string(step.selector or "")
-            return f"  // Assertion {step_idx}: assert_element_visible\n  // [INTENDED_ASSERTION: {step.action} selector={step.selector}]\n  await expect(page.locator({sel_lit})).toBeVisible();\n"
-
-        if action == "assert_value_equals":
-            sel_lit = escape_js_string(step.selector or "")
-            val_lit = escape_js_string(step.value or "")
-            return f"  // Assertion {step_idx}: assert_value_equals\n  // [INTENDED_ASSERTION: {step.action} selector={step.selector}]\n  await expect(page.locator({sel_lit})).toHaveValue({val_lit});\n"
-
-        if action == "assert_url_contains":
-            val_lit = escape_js_string(step.value or "")
-            return f"  // Assertion {step_idx}: assert_url_contains\n  // [INTENDED_ASSERTION: {step.action} url={step.value}]\n  await expect(page).toHaveURL(new RegExp({val_lit}));\n"
-
-        raise ValueError(f"Unsupported action type: {action}")
+  // 3. Execute Assertions
+  for (let i = 0; i < PLAN.assertions.length; i++) {
+    const a = PLAN.assertions[i];
+    if (a.action === 'assert_text_visible') {
+      const loc = (a.exact !== undefined && a.exact !== null) ? page.getByText(a.text, { exact: a.exact }) : page.getByText(a.text);
+      await expect(loc.first()).toBeVisible();
+    } else if (a.action === 'assert_text_hidden') {
+      const loc = (a.exact !== undefined && a.exact !== null) ? page.getByText(a.text, { exact: a.exact }) : page.getByText(a.text);
+      await expect(loc.first()).toBeHidden();
+    } else if (a.action === 'assert_element_visible') {
+      await expect(page.locator(a.selector).first()).toBeVisible();
+    } else if (a.action === 'assert_value_equals') {
+      await expect(page.locator(a.selector).first()).toHaveValue(a.value || '');
+    } else if (a.action === 'assert_url_contains') {
+      const escapedVal = (a.value || '').replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');
+      await expect(page).toHaveURL(new RegExp(escapedVal));
+    }
+  }
+});
+"""
 
     def compile(
         self,
@@ -85,36 +82,23 @@ class PlaywrightCompiler:
         test_name: str = "reproduction-test",
         screenshot_path: str = "repro-screenshot.png",
     ) -> Tuple[str, str]:
-        """Compiles an ActionPlan into Playwright JavaScript test code.
-        
+        """Compiles an ActionPlan into a safe data-driven Playwright test.
+
         Returns: (test_code, sha256_hash)
         """
-        lines = [
-            "// Auto-generated frozen test by ReproProof compiler",
-            "// Once approved by a human, this file is immutable.",
-            "const { test, expect } = require('@playwright/test');",
-            "",
-            f"test('{test_name}', async ({{ page, baseURL }}) => {{",
-            "  // Reset state before running reproduction if available",
-            "  try { await page.request.post(`${baseURL}/api/reset`); } catch (e) {}",
-            "",
-        ]
+        # Serialize plan into a dictionary with screenshot_path
+        plan_dict = plan.model_dump()
+        plan_dict["screenshot_path"] = screenshot_path
 
-        # Add steps
-        for idx, step in enumerate(plan.steps, start=1):
-            lines.append(self.compile_step(step, idx))
+        # Serialize as strict JSON literal (double json.dumps produces a safe JS string literal)
+        raw_json = json.dumps(plan_dict, ensure_ascii=False)
+        escaped_literal = json.dumps(raw_json)
 
-        # Screenshot before final assertions
-        escaped_ss = escape_js_string(screenshot_path)
-        lines.append(f"  // Capture screenshot of defect state\n  await page.screenshot({{ path: {escaped_ss}, fullPage: true }});\n")
+        # Sanitize test_name: alphanumeric and dashes only
+        safe_test_name = "".join(c for c in test_name if c.isalnum() or c in "-_") or "repro-test"
 
-        # Add assertions
-        for idx, assertion in enumerate(plan.assertions, start=len(plan.steps) + 1):
-            lines.append(self.compile_step(assertion, idx))
+        code = self.STATIC_TEST_DRIVER.replace("__PLAN_JSON_LITERAL__", escaped_literal)
+        code = code.replace("__TEST_NAME__", safe_test_name)
 
-        lines.append("});")
-        lines.append("")
-
-        code = "\n".join(lines)
         sha256 = hashlib.sha256(code.encode("utf-8")).hexdigest()
         return code, sha256

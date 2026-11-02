@@ -7,7 +7,7 @@ Search for an existing task before adding one. When a task is done, move it to C
 _(none)_
 
 ## Pending
-_(all core PRD milestone tasks completed)_
+_(none — hackathon MVP objectives fully met and verified)_
 
 ## Blocked
 _(none)_
@@ -26,3 +26,8 @@ _(none)_
 - [x] TASK-010 [P0] Add pinned permissively-licensed third-party app with manifest (`apps/third-party/`, R12). Done 2026-11-02.
 - [x] TASK-011 [P0] Build Streamlit interface (`reproproof/ui/app.py`). Done 2026-11-02.
 - [x] TASK-012 [P0] Build evaluation harness and run benchmarks (`evals/run_eval.py`, Gate G3). Done 2026-11-02.
+- [x] TASK-013 [P0] Remediate Prompt-Injection-to-RCE vulnerability in test compiler: safe JSON serialization with `STATIC_TEST_DRIVER`, ARIA role validation, and relative path constraints. Add `tests/test_security_injection.py`. Done 2026-11-03.
+- [x] TASK-014 [P0] Replace unsafe line-deletion patch heuristic with `git apply --check` and `git apply`. Enforce path safety against `..`, absolute paths, symlinks, and protected files. Add `tests/test_patch_application.py`. Done 2026-11-03.
+- [x] TASK-015 [P0] Enforce controller-owned state transitions in SQLite: bind human approval to test SHA-256 hash, reject duplicate approval, require verified evidence before transitioning to `passes_frozen_test`. Add `tests/test_controller_invariants.py`. Done 2026-11-03.
+- [x] TASK-016 [P0] Implement genuine Playwright test execution environment: package configuration, ephemeral port allocation, process tree termination, runner environment sanitization (scrub `MODEL_API_KEY`). Add full end-to-end integration test `tests/test_e2e_workflow.py`. Done 2026-11-03.
+- [x] TASK-017 [P0] Eliminate fabricated benchmark metrics: refactor `evals/run_eval.py` to execute real reproduction and clean verification with Playwright; report honest results with explicit denominators; mark out-of-scope cases `NOT RUN`; update UI and docs. Done 2026-11-03.

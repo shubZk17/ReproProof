@@ -1,19 +1,26 @@
 """Controller and State Machine Engine for ReproProof runs.
 
-Maintains strict state transitions, human approval gate, test freeze (SHA-256),
-and persistent SQLite run storage.
+Enforces:
+- Hard Rule 1: Models only propose. Only the controller changes run state.
+- Hard Rule 2: Never call patch model before human approves reproduction test.
+- Hard Rule 4: Never set passes_frozen_test unless same test hash and regression checks pass.
+- Hard Rule 5: Never use 'verified' as a status. Use 'passes_frozen_test'.
+- Invariant: Approval binds to exact test hash; duplicate or mutated approvals are rejected.
+- Invariant: Direct caller transition to passes_frozen_test without evidence is rejected.
 """
 
 from __future__ import annotations
 
 import datetime
+import hashlib
 import json
 import sqlite3
 import uuid
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from reproproof.core.schemas import (
+    ActionPlan,
+    PatchProposal,
     RunRecord,
     RunStatus,
     UsageRecord,
@@ -23,7 +30,7 @@ from reproproof.core.limits import DEFAULT_LIMITS, RunLimits, BudgetExceededErro
 
 
 class StateTransitionError(Exception):
-    """Raised when an illegal state transition is attempted."""
+    """Raised when an illegal or unverified state transition is attempted."""
     pass
 
 
@@ -36,12 +43,12 @@ class RunController:
         self._init_db()
 
     def _get_connection(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=10.0)
         conn.row_factory = sqlite3.Row
         return conn
 
     def _init_db(self) -> None:
-        """Initializes the SQLite schema for run records and audit events."""
+        """Initializes the SQLite schema with complete persistence fields."""
         with self._get_connection() as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS runs (
@@ -51,6 +58,7 @@ class RunController:
                     source_revision TEXT,
                     patched_revision TEXT,
                     test_sha256 TEXT,
+                    frozen_test_code TEXT,
                     approved_at TEXT,
                     approved_by TEXT,
                     model_ids TEXT NOT NULL,
@@ -60,6 +68,9 @@ class RunController:
                     cost_usd REAL DEFAULT 0.0,
                     artifact_ids TEXT NOT NULL,
                     status_reason TEXT,
+                    plan_json TEXT,
+                    patch_diff TEXT,
+                    verification_evidence TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 )
@@ -95,10 +106,11 @@ class RunController:
             conn.execute("""
                 INSERT INTO runs (
                     run_id, app_id, status, source_revision, patched_revision,
-                    test_sha256, approved_at, approved_by, model_ids, patch_attempts,
+                    test_sha256, frozen_test_code, approved_at, approved_by, model_ids, patch_attempts,
                     input_tokens, output_tokens, cost_usd, artifact_ids,
-                    status_reason, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    status_reason, plan_json, patch_diff, verification_evidence,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 record.run_id,
                 record.app_id,
@@ -106,6 +118,7 @@ class RunController:
                 record.source_revision,
                 record.patched_revision,
                 record.test_sha256,
+                record.frozen_test_code,
                 record.approved_at,
                 record.approved_by,
                 json.dumps(record.model_ids),
@@ -115,6 +128,9 @@ class RunController:
                 record.usage.cost_usd,
                 json.dumps(record.artifact_ids),
                 record.status_reason,
+                record.plan_json,
+                record.patch_diff,
+                record.verification_evidence,
                 record.created_at,
                 record.updated_at,
             ))
@@ -139,6 +155,7 @@ class RunController:
                 source_revision=row["source_revision"],
                 patched_revision=row["patched_revision"],
                 test_sha256=row["test_sha256"],
+                frozen_test_code=row["frozen_test_code"],
                 approved_at=row["approved_at"],
                 approved_by=row["approved_by"],
                 model_ids=json.loads(row["model_ids"]),
@@ -150,9 +167,27 @@ class RunController:
                 ),
                 artifact_ids=json.loads(row["artifact_ids"]),
                 status_reason=row["status_reason"],
+                plan_json=row["plan_json"],
+                patch_diff=row["patch_diff"],
+                verification_evidence=row["verification_evidence"],
                 created_at=row["created_at"],
                 updated_at=row["updated_at"],
             )
+
+    def record_plan(self, run_id: str, plan: ActionPlan) -> None:
+        """Stores reproduction plan in run record."""
+        now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        plan_str = json.dumps(plan.model_dump(), ensure_ascii=False)
+        with self._get_connection() as conn:
+            conn.execute("UPDATE runs SET plan_json = ?, updated_at = ? WHERE run_id = ?", (plan_str, now, run_id))
+            conn.commit()
+
+    def record_patch(self, run_id: str, patch: PatchProposal) -> None:
+        """Stores patch proposal in run record."""
+        now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        with self._get_connection() as conn:
+            conn.execute("UPDATE runs SET patch_diff = ?, updated_at = ? WHERE run_id = ?", (patch.unified_diff, now, run_id))
+            conn.commit()
 
     def transition(
         self,
@@ -160,10 +195,12 @@ class RunController:
         to_status: RunStatus,
         reason: Optional[str] = None,
         actor: str = "controller",
+        _internal_evidence_verified: bool = False,
     ) -> RunRecord:
         """Enforces legal state transitions per PRD §State machine.
-        
+
         Hard Rule: Reject any other transition in code.
+        Hard Rule: Direct caller transition to PASSES_FROZEN_TEST without verified evidence is prohibited.
         """
         run = self.get_run(run_id)
         if not run:
@@ -171,7 +208,14 @@ class RunController:
 
         from_status = run.status
 
-        # Check validity
+        # Invariant: PASSES_FROZEN_TEST requires evidence
+        if to_status == RunStatus.PASSES_FROZEN_TEST and not _internal_evidence_verified:
+            raise StateTransitionError(
+                "Direct transition to passes_frozen_test is prohibited. "
+                "Must invoke record_verification_result with verified fresh-copy evidence."
+            )
+
+        # Check transition validity
         allowed = VALID_TRANSITIONS.get(from_status, [])
         if to_status not in allowed:
             raise StateTransitionError(
@@ -202,12 +246,16 @@ class RunController:
         self,
         run_id: str,
         test_sha256: str,
+        frozen_test_code: Optional[str] = None,
         approved_by: str = "human_operator",
     ) -> RunRecord:
-        """Records human test approval and transitions to PATCHING.
-        
-        Hard rule: Never call the patch model before a human approves the reproduction test.
-        Freezes the test SHA-256.
+        """Records human test approval and freezes the reproduction test.
+
+        Enforces:
+        - Transition only from AWAITING_TEST_APPROVAL.
+        - Hash verification: computed SHA-256 of code must match test_sha256.
+        - Atomic transition preventing duplicate approval.
+        - Test is immutable once approved.
         """
         run = self.get_run(run_id)
         if not run:
@@ -215,24 +263,57 @@ class RunController:
 
         if run.status != RunStatus.AWAITING_TEST_APPROVAL:
             raise StateTransitionError(
-                f"Cannot approve test in state {run.status.value}. Must be awaiting_test_approval."
+                f"Cannot approve test in state '{run.status.value}'. Must be in 'awaiting_test_approval'."
             )
+
+        if run.approved_at is not None:
+            raise StateTransitionError("Duplicate approval rejected: test is already approved and frozen.")
+
+        # If code is supplied, verify hash integrity
+        if frozen_test_code:
+            actual_sha = hashlib.sha256(frozen_test_code.encode("utf-8")).hexdigest()
+            if actual_sha != test_sha256:
+                raise StateTransitionError(
+                    f"Test hash mismatch on approval: expected {test_sha256}, calculated {actual_sha}."
+                )
 
         now = datetime.datetime.now(datetime.timezone.utc).isoformat()
         with self._get_connection() as conn:
-            conn.execute("""
+            # Atomic update checking status and approved_at
+            cursor = conn.execute("""
                 UPDATE runs
-                SET test_sha256 = ?, approved_at = ?, approved_by = ?, updated_at = ?
-                WHERE run_id = ?
-            """, (test_sha256, now, approved_by, now, run_id))
+                SET test_sha256 = ?, frozen_test_code = COALESCE(?, frozen_test_code),
+                    approved_at = ?, approved_by = ?, status = ?,
+                    status_reason = ?, updated_at = ?
+                WHERE run_id = ? AND status = ? AND approved_at IS NULL
+            """, (
+                test_sha256,
+                frozen_test_code,
+                now,
+                approved_by,
+                RunStatus.PATCHING.value,
+                f"Approved by {approved_by} with frozen test SHA-256: {test_sha256[:12]}...",
+                now,
+                run_id,
+                RunStatus.AWAITING_TEST_APPROVAL.value,
+            ))
+            if cursor.rowcount == 0:
+                raise StateTransitionError("Approval failed: concurrent update or state mismatch.")
+
+            conn.execute("""
+                INSERT INTO transitions (run_id, from_status, to_status, reason, actor, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (run_id, RunStatus.AWAITING_TEST_APPROVAL.value, RunStatus.PATCHING.value, f"Approved by {approved_by}", approved_by, now))
             conn.commit()
 
-        return self.transition(
-            run_id=run_id,
-            to_status=RunStatus.PATCHING,
-            reason=f"Approved by {approved_by} with frozen test SHA256: {test_sha256[:12]}...",
-            actor=approved_by,
-        )
+        run.test_sha256 = test_sha256
+        if frozen_test_code:
+            run.frozen_test_code = frozen_test_code
+        run.approved_at = now
+        run.approved_by = approved_by
+        run.status = RunStatus.PATCHING
+        run.updated_at = now
+        return run
 
     def record_human_rejection(
         self,
@@ -247,6 +328,78 @@ class RunController:
             reason=reason,
             actor=rejected_by,
         )
+
+    def record_verification_result(
+        self,
+        run_id: str,
+        passed_frozen_test: bool,
+        passed_regression: bool,
+        actual_test_sha256: str,
+        details: str,
+        stdout: str = "",
+        stderr: str = "",
+    ) -> RunRecord:
+        """Records clean verification evidence and transitions state accordingly.
+
+        Hard Rule 4: Never set passes_frozen_test unless same test hash and regression checks pass.
+        """
+        run = self.get_run(run_id)
+        if not run:
+            raise ValueError(f"Run {run_id} not found.")
+
+        if run.status != RunStatus.VERIFYING:
+            raise StateTransitionError(
+                f"Cannot record verification result in state '{run.status.value}'. Must be in 'verifying'."
+            )
+
+        # Hash integrity check
+        if run.test_sha256 and actual_test_sha256 != run.test_sha256:
+            raise StateTransitionError(
+                f"Verification test hash ({actual_test_sha256}) does not match frozen test hash ({run.test_sha256})."
+            )
+
+        evidence = {
+            "passed_frozen_test": passed_frozen_test,
+            "passed_regression": passed_regression,
+            "actual_test_sha256": actual_test_sha256,
+            "details": details,
+            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        }
+        evidence_json = json.dumps(evidence)
+
+        now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        with self._get_connection() as conn:
+            conn.execute("""
+                UPDATE runs
+                SET verification_evidence = ?, updated_at = ?
+                WHERE run_id = ?
+            """, (evidence_json, now, run_id))
+            conn.commit()
+
+        if passed_frozen_test and passed_regression:
+            return self.transition(
+                run_id=run_id,
+                to_status=RunStatus.PASSES_FROZEN_TEST,
+                reason=details,
+                actor="verifier",
+                _internal_evidence_verified=True,
+            )
+        else:
+            # Check attempts: if under limit, can retry (PATCHING); else UNRESOLVED
+            if run.patch_attempts < self.limits.max_patch_attempts:
+                return self.transition(
+                    run_id=run_id,
+                    to_status=RunStatus.PATCHING,
+                    reason=f"Verification failed on attempt {run.patch_attempts}: {details}. Retrying.",
+                    actor="verifier",
+                )
+            else:
+                return self.transition(
+                    run_id=run_id,
+                    to_status=RunStatus.UNRESOLVED,
+                    reason=f"Verification failed and all {self.limits.max_patch_attempts} attempts exhausted.",
+                    actor="verifier",
+                )
 
     def record_usage(
         self,

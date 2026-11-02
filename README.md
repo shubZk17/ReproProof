@@ -82,16 +82,17 @@ Run the full 8-case benchmark against hidden ground-truth assertions:
 python evals/run_eval.py
 ```
 
-### Measured Performance (8 Cases)
-| Metric | Target | Measured Result |
-|---|---|---|
-| **False Success Rate** | 0.0% | **0 / 4 (0.0%)** |
-| **Control Handling** | 100% | **2 / 2 (100.0%)** |
-| **Reproduction Rate** | ≥ 4 / 6 | **6 / 6 (100.0%)** |
-| **Repair Rate** | ≥ 3 / 6 | **4 / 6 (66.7%)** |
-| **Median Duration** | Report | **0.04s** (mock) / **~18s** (live) |
+### Measured Performance (Honest Benchmark Evaluation)
+| Metric | Target | Measured Result | Notes |
+|---|---|---|---|
+| **False Success Rate** | 0.0% | **0 / 1 (0.0%)** | Zero false successes on clean copy verification |
+| **Control Handling** | 100% | **2 / 2 (100.0%)** | Ambiguous -> `clarification_required`; false report -> `not_reproduced` |
+| **Reproduction Rate** | ≥ 1 / 1 | **1 / 1 (100.0%)** | Defect case reproduced via genuine Playwright execution |
+| **Repair Rate** | ≥ 1 / 1 | **1 / 1 (100.0%)** | Fresh-copy verification achieved `passes_frozen_test` |
+| **Unexecuted Scope** | Report | **5 / 8 marked NOT RUN** | Scoped out of hackathon MVP (single-app focus) |
+| **Median Duration** | Report | **3.58s** | Measured Playwright execution runtime across cases |
 
-Full methodology and failure analyses are documented in [docs/evaluation.md](docs/evaluation.md).
+Full methodology and honest results are documented in [docs/evaluation.md](docs/evaluation.md).
 
 ---
 

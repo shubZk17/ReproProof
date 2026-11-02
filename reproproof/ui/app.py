@@ -172,6 +172,7 @@ with tab_pipeline:
                         controller.record_human_approval(
                             run_id=run_record.run_id,
                             test_sha256=st.session_state.get("test_sha", "sha256_placeholder"),
+                            frozen_test_code=st.session_state.get("test_code"),
                             approved_by="human_operator",
                         )
                         st.rerun()
@@ -237,17 +238,25 @@ with tab_evals:
     st.markdown("### 📊 Measured Benchmark Evaluation")
     st.caption("Rule 7: Never invent metrics. Report measured results with denominators, including failures.")
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Reproduction Rate", "5 / 6 (83.3%)")
-    c2.metric("Repair Rate (passes_frozen_test)", "4 / 6 (66.7%)")
-    c3.metric("Control Handling", "2 / 2 (100%)")
-    c4.metric("False Success Rate", "0 / 8 (0.0%)")
-
     eval_results_file = "evals/results/latest_run.json"
     if os.path.exists(eval_results_file):
-        with open(eval_results_file, "r") as ef:
-            st.json(json.load(ef))
+        with open(eval_results_file, "r", encoding="utf-8") as ef:
+            eval_data = json.load(ef)
+
+        metrics = eval_data.get("metrics", {})
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Reproduction Rate", metrics.get("reproduction_rate", "N/A"))
+        c2.metric("Repair Rate (passes_frozen_test)", metrics.get("repair_rate", "N/A"))
+        c3.metric("Control Handling", metrics.get("control_handling", "N/A"))
+        c4.metric("False Success Rate", metrics.get("false_success_rate", "N/A"))
+
+        st.json(eval_data)
     else:
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Reproduction Rate", "NOT RUN")
+        c2.metric("Repair Rate", "NOT RUN")
+        c3.metric("Control Handling", "NOT RUN")
+        c4.metric("False Success Rate", "NOT RUN")
         st.info("Run `python evals/run_eval.py` to execute the complete evaluation suite against hidden checks.")
 
 # Tab 3: Audit & Run History

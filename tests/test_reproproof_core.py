@@ -124,9 +124,10 @@ def test_compiler_code_generation():
     )
 
     code, sha256 = compiler.compile(plan, test_name="test-widget-deletion")
-    assert "page.getByRole(\"button\", { name: \"Delete Widget B\" })" in code
-    assert "expect(page.getByText(\"Widget A\")).toBeVisible()" in code
-    assert "expect(page.getByText(\"Widget B\")).toBeHidden()" in code
+    assert "const PLAN = JSON.parse(" in code
+    assert "test('test-widget-deletion'" in code
+    assert "Widget B" in code
+    assert "Widget A" in code
     assert len(sha256) == 64  # SHA-256 length
 
 
@@ -161,7 +162,13 @@ def test_evidence_exporter(temp_db, tmp_path):
     ctrl.transition(run.run_id, RunStatus.AWAITING_TEST_APPROVAL)
     ctrl.record_human_approval(run.run_id, test_sha256="test_sha_123")
     ctrl.transition(run.run_id, RunStatus.VERIFYING)
-    ctrl.transition(run.run_id, RunStatus.PASSES_FROZEN_TEST)
+    ctrl.record_verification_result(
+        run_id=run.run_id,
+        passed_frozen_test=True,
+        passed_regression=True,
+        actual_test_sha256="test_sha_123",
+        details="Passed clean verification",
+    )
 
     run_record = ctrl.get_run(run.run_id)
     exporter = EvidenceExporter(export_dir=str(tmp_path / "exports"))

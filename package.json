@@ -1,0 +1,13 @@
+{
+  "name": "reproproof-workspace",
+  "version": "1.0.0",
+  "private": true,
+  "description": "ReproProof runner workspace with pinned Playwright Test runner",
+  "scripts": {
+    "test:repro": "playwright test",
+    "test:regression": "playwright test --config protected-tests/playwright.config.js"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.40.0"
+  }
+}

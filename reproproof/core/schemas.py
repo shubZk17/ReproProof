@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class RunStatus(str, Enum):
@@ -82,9 +82,14 @@ AllowedActionType = Literal[
     "assert_url_contains",
 ]
 
+ALLOWED_ROLES = {
+    "button", "link", "textbox", "checkbox", "radio", "combobox",
+    "heading", "row", "cell", "tab", "menuitem", "dialog", "alert", "status",
+}
+
 
 class ActionStep(BaseModel):
-    """Single step proposed by the model."""
+    """Single step proposed by the model with strict security validation."""
     model_config = ConfigDict(extra="forbid")
 
     action: AllowedActionType
@@ -94,6 +99,39 @@ class ActionStep(BaseModel):
     name: Optional[str] = Field(default=None, max_length=128)
     value: Optional[str] = Field(default=None, max_length=512)
     text: Optional[str] = Field(default=None, max_length=512)
+    exact: Optional[bool] = Field(default=None)
+
+    @field_validator("path")
+    @classmethod
+    def validate_path(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            # Must be a relative path starting with /; no protocol schemes or javascript:
+            if not v.startswith("/") or ":" in v:
+                raise ValueError("Path must be a relative URL starting with '/' and cannot contain ':' or protocol schemes.")
+        return v
+
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v.lower() not in ALLOWED_ROLES:
+            raise ValueError(f"Role '{v}' is not an allowlisted ARIA role. Allowed: {sorted(list(ALLOWED_ROLES))}")
+        return v.lower() if v else None
+
+    @model_validator(mode="after")
+    def validate_step_action_requirements(self) -> ActionStep:
+        if self.action == "goto" and not self.path:
+            raise ValueError("Action 'goto' requires 'path'.")
+        if self.action == "click" and not (self.role or self.name or self.selector):
+            raise ValueError("Action 'click' requires at least one of 'role', 'name', or 'selector'.")
+        if self.action in ("fill", "select") and not (self.selector and self.value is not None):
+            raise ValueError(f"Action '{self.action}' requires both 'selector' and 'value'.")
+        if self.action in ("assert_text_visible", "assert_text_hidden") and not self.text:
+            raise ValueError(f"Action '{self.action}' requires 'text'.")
+        if self.action in ("assert_element_visible", "assert_value_equals") and not self.selector:
+            raise ValueError(f"Action '{self.action}' requires 'selector'.")
+        if self.action == "assert_url_contains" and not self.value:
+            raise ValueError("Action 'assert_url_contains' requires 'value'.")
+        return self
 
 
 class ActionPlan(BaseModel):
@@ -140,12 +178,16 @@ class RunRecord(BaseModel):
     source_revision: Optional[str] = None
     patched_revision: Optional[str] = None
     test_sha256: Optional[str] = None
+    frozen_test_code: Optional[str] = None
     approved_at: Optional[str] = None
     approved_by: Optional[str] = None
     model_ids: List[str] = Field(default_factory=list)
     patch_attempts: int = 0
     usage: UsageRecord = Field(default_factory=UsageRecord)
     artifact_ids: List[str] = Field(default_factory=list)
+    plan_json: Optional[str] = None
+    patch_diff: Optional[str] = None
+    verification_evidence: Optional[str] = None
     created_at: str
     updated_at: str
     status_reason: Optional[str] = None

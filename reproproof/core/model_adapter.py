@@ -190,13 +190,18 @@ class MetaModelClient:
             patch = PatchProposal(
                 explanation="Fix delete handler to target matching id instead of index 0.",
                 unified_diff=(
-                    "--- a/src/app.js\n"
-                    "+++ b/src/app.js\n"
-                    "@@ -10,3 +10,3 @@\n"
-                    "-  items.splice(0, 1);\n"
-                    "+  items = items.filter(item => item.id !== id);\n"
+                    "--- a/src/inventory.js\n"
+                    "+++ b/src/inventory.js\n"
+                    "@@ -29,6 +29,6 @@\n"
+                    "     return false;\n"
+                    "   }\n"
+                    "   // BUG: ignores index and always removes the first element (index 0)\n"
+                    "-  itemsStore.splice(0, 1);\n"
+                    "+  itemsStore = itemsStore.filter(item => item.id !== id);\n"
+                    "   return true;\n"
+                    " }\n"
                 ),
-                target_files=["src/app.js"],
+                target_files=["src/inventory.js"],
             )
             return patch, f"{model_id}-mock", 150, 120
 

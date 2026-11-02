@@ -10,6 +10,6 @@ protected_paths:
   - tests/
   - package.json
   - package-lock.json
-  - playwright.config.ts
-regression_command: npx playwright test --config protected-tests/playwright.config.ts
+  - playwright.config.js
+regression_command: npx playwright test --config protected-tests/playwright.config.js
 startup_timeout_seconds: 15

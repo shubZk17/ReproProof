@@ -1,29 +1,30 @@
 """Fresh-Copy Isolated Verification Engine.
 
-Enforces R8, Hard Rule 4, and Hard Rule 5:
-- Copies app to an isolated temp directory.
-- Applies validated patch strictly to source files.
-- Verifies SHA-256 of the frozen test is byte-identical.
-- Starts the patched app in a temporary subprocess.
-- Executes the frozen test and protected regression suite.
-- Sets passes_frozen_test ONLY if both pass cleanly.
-- Never uses the word 'verified' as a status.
+Enforces:
+- R8: Clean verification on temporary fresh copy of app.
+- Ephemeral Ports: Dynamically allocated port avoids port collisions.
+- Sanitized Environment: Strips MODEL_API_KEY and credentials from runner environment.
+- Process Tree Cleanup: Reliable process tree termination on Windows.
+- Hard Rule 4: Never set passes_frozen_test unless same test hash and regression checks pass.
+- Hard Rule 5: Never use 'verified' as a status. Use 'passes_frozen_test'.
 """
 
 from __future__ import annotations
 
 import hashlib
 import os
+from pathlib import Path
 import shutil
 import subprocess
 import tempfile
 import time
 import urllib.request
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional
 
 from reproproof.core.schemas import AppManifest, PatchProposal, RunStatus
 from reproproof.core.patcher import PatchValidator
 from reproproof.core.limits import DEFAULT_LIMITS, RunLimits
+from reproproof.core.proc_utils import find_free_port, get_sanitized_runner_env, kill_process_tree
 
 
 class VerificationResult:
@@ -55,16 +56,16 @@ class FreshCopyVerifier:
         self.validator = PatchValidator(manifest, limits)
 
     def _wait_for_server(self, port: int, timeout_seconds: int = 15) -> bool:
-        """Polls server until it responds or timeout occurs."""
+        """Polls server until it responds with 200 OK or timeout occurs."""
         start_time = time.time()
-        url = f"http://localhost:{port}/health"
+        url = f"http://127.0.0.1:{port}/health"
         while time.time() - start_time < timeout_seconds:
             try:
-                with urllib.request.urlopen(url, timeout=1) as resp:
+                with urllib.request.urlopen(url, timeout=1.0) as resp:
                     if resp.status == 200:
                         return True
             except Exception:
-                time.sleep(0.3)
+                time.sleep(0.25)
         return False
 
     def verify_patch(
@@ -73,8 +74,7 @@ class FreshCopyVerifier:
         patch_proposal: PatchProposal,
         frozen_test_code: str,
         expected_test_sha256: str,
-        regression_test_dir: str = "protected-tests",
-        port: int = 3001,
+        port: Optional[int] = None,
     ) -> VerificationResult:
         """Executes full clean verification on a temporary directory copy."""
         # 1. Byte-identical test hash verification (Rule 4)
@@ -88,57 +88,60 @@ class FreshCopyVerifier:
                 test_sha256=actual_test_sha,
             )
 
-        # 2. Validate patch
+        # 2. Validate patch syntax and boundaries
         self.validator.validate_patch(patch_proposal)
 
         # 3. Create fresh temporary copy
+        repo_root = Path(__file__).resolve().parent.parent.parent
+        real_source_dir = str(repo_root / app_source_dir) if not os.path.isabs(app_source_dir) else app_source_dir
+
         temp_dir = tempfile.mkdtemp(prefix="reproproof_verify_")
         app_copy_dir = os.path.join(temp_dir, "app")
-        shutil.copytree(app_source_dir, app_copy_dir)
+        shutil.copytree(real_source_dir, app_copy_dir)
 
-        # 4. Apply patch to fresh copy
+        # 4. Apply patch to fresh copy using git apply
         self.validator.apply_diff_to_directory(app_copy_dir, patch_proposal.unified_diff)
 
-        # 5. Write frozen test into temp execution directory outside app source
-        test_file = os.path.join(temp_dir, "reproduction.spec.js")
+        # 5. Write frozen test into runs directory in repo_root
+        runs_dir = repo_root / "runs"
+        runs_dir.mkdir(parents=True, exist_ok=True)
+        test_file = str(runs_dir / f"verify_{os.path.basename(temp_dir)}.spec.js")
         with open(test_file, "w", encoding="utf-8") as f:
             f.write(frozen_test_code)
 
         server_proc = None
+        allocated_port = port or find_free_port()
         try:
-            # 6. Start patched server in temp copy
-            env = os.environ.copy()
-            env["PORT"] = str(port)
-            env["BASE_URL"] = f"http://localhost:{port}"
+            # 6. Start patched server in temp copy with sanitized environment
+            safe_env = get_sanitized_runner_env(allocated_port)
 
-            # Start server subprocess
             start_parts = self.manifest.start_command.split()
             server_proc = subprocess.Popen(
                 start_parts,
                 cwd=app_copy_dir,
-                env=env,
+                env=safe_env,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
             )
 
             # Wait for server ready
-            if not self._wait_for_server(port, timeout_seconds=self.manifest.startup_timeout_seconds):
+            if not self._wait_for_server(allocated_port, timeout_seconds=self.manifest.startup_timeout_seconds):
                 return VerificationResult(
                     passed_frozen_test=False,
                     passed_regression=False,
                     status=RunStatus.ENVIRONMENT_ERROR,
-                    details="Patched server failed to start within startup timeout.",
+                    details="Patched server failed to become ready within startup timeout.",
                     test_sha256=expected_test_sha256,
                 )
 
-            # 7. Run the frozen Playwright test against patched app
-            # Run playwright test directly via npx.cmd on Windows
-            run_cmd = f"npx.cmd playwright test {test_file}"
+            # 7. Run the frozen Playwright test against patched app from repo_root
+            rel_test = os.path.relpath(test_file, str(repo_root)).replace("\\", "/")
+            run_cmd = f'npx.cmd playwright test "{rel_test}"'
             test_proc = subprocess.run(
                 run_cmd,
                 shell=True,
-                cwd=temp_dir,
-                env=env,
+                cwd=str(repo_root),
+                env=safe_env,
                 capture_output=True,
                 text=True,
                 timeout=self.limits.browser_test_timeout_seconds,
@@ -154,8 +157,8 @@ class FreshCopyVerifier:
                 reg_proc = subprocess.run(
                     reg_cmd,
                     shell=True,
-                    cwd=os.getcwd(),
-                    env=env,
+                    cwd=str(repo_root),
+                    env=safe_env,
                     capture_output=True,
                     text=True,
                     timeout=self.limits.browser_test_timeout_seconds,
@@ -183,12 +186,6 @@ class FreshCopyVerifier:
             )
 
         finally:
-            # Terminate server process cleanly
             if server_proc:
-                server_proc.terminate()
-                try:
-                    server_proc.wait(timeout=3)
-                except subprocess.TimeoutExpired:
-                    server_proc.kill()
-            # Clean up temp directory
+                kill_process_tree(server_proc)
             shutil.rmtree(temp_dir, ignore_errors=True)
