@@ -1,0 +1,42 @@
+{
+  "DEV-01": {
+    "expected_status": "passes_frozen_test",
+    "intended_assertion": "assert_text_visible",
+    "hidden_check": "items[0].name === 'Widget A' && items.find(i => i.name === 'Widget B') === undefined"
+  },
+  "DEV-02": {
+    "expected_status": "passes_frozen_test",
+    "intended_assertion": "assert_text_visible",
+    "hidden_check": "todos.some(t => t.title === 'Buy groceries' && !t.completed)"
+  },
+  "DEV-03": {
+    "expected_status": "passes_frozen_test",
+    "intended_assertion": "assert_text_hidden",
+    "hidden_check": "items.every(i => i.count >= 0)"
+  },
+  "DEV-04": {
+    "expected_status": "passes_frozen_test",
+    "intended_assertion": "assert_text_visible",
+    "hidden_check": "totalCount === sum(items.map(i => i.count))"
+  },
+  "DEV-05": {
+    "expected_status": "clarification_required",
+    "intended_assertion": null,
+    "hidden_check": "status === 'clarification_required'"
+  },
+  "HELD-01": {
+    "expected_status": "passes_frozen_test",
+    "intended_assertion": "assert_text_visible",
+    "hidden_check": "persistence_check"
+  },
+  "HELD-02": {
+    "expected_status": "passes_frozen_test",
+    "intended_assertion": "assert_element_visible",
+    "hidden_check": "toggle_check"
+  },
+  "HELD-03": {
+    "expected_status": "not_reproduced",
+    "intended_assertion": null,
+    "hidden_check": "title is intended behavior, test must not fail"
+  }
+}

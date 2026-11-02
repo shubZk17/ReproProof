@@ -1,0 +1,8 @@
+{"case_id": "DEV-01", "split": "dev", "app_id": "inventory-demo", "type": "defect", "family": "wrong row identity", "report_text": "Clicking Delete Widget B removes Widget A instead of Widget B."}
+{"case_id": "DEV-02", "split": "dev", "app_id": "todo-app", "type": "defect", "family": "filter interaction", "report_text": "Clicking Clear Completed clears active todos instead of completed todos."}
+{"case_id": "DEV-03", "split": "dev", "app_id": "inventory-demo", "type": "defect", "family": "invalid input accepted", "report_text": "Submitting negative quantity in Add Item form is accepted and decreases stock."}
+{"case_id": "DEV-04", "split": "dev", "app_id": "inventory-demo", "type": "defect", "family": "stale derived state", "report_text": "Stock count total does not refresh after item deletion."}
+{"case_id": "DEV-05", "split": "dev", "app_id": "inventory-demo", "type": "ambiguous", "family": "control", "report_text": "The button does something weird when I click it."}
+{"case_id": "HELD-01", "split": "held_out", "app_id": "inventory-demo", "type": "defect", "family": "persistence loss", "report_text": "Adding item Widget X does not persist across page reloads."}
+{"case_id": "HELD-02", "split": "held_out", "app_id": "todo-app", "type": "defect", "family": "toggle state", "report_text": "Toggling todo does not persist completed state."}
+{"case_id": "HELD-03", "split": "held_out", "app_id": "inventory-demo", "type": "false_report", "family": "control", "report_text": "The page title says Warehouse Inventory which is completely broken."}

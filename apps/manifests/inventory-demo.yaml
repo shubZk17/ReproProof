@@ -1,0 +1,15 @@
+app_id: inventory-demo
+name: Warehouse Inventory Demo
+description: Web app for managing catalog items with seeded wrong-row deletion defect
+base_url: http://localhost:3000
+start_command: node src/server.js
+app_dir: apps/demo-app
+allowed_source_paths:
+  - src/
+protected_paths:
+  - tests/
+  - package.json
+  - package-lock.json
+  - playwright.config.ts
+regression_command: npx playwright test --config protected-tests/playwright.config.ts
+startup_timeout_seconds: 15

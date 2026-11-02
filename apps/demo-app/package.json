@@ -1,0 +1,13 @@
+{
+  "name": "inventory-demo",
+  "version": "1.0.0",
+  "description": "Seeded Inventory Management demo app for ReproProof",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node src/server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT"
+}

@@ -1,0 +1,81 @@
+{
+  "evaluation_summary": {
+    "total_cases": 8,
+    "defect_cases": 6,
+    "control_cases": 2
+  },
+  "metrics": {
+    "false_success_rate": "0 / 4 (0.0%)",
+    "control_handling": "2 / 2 (100.0%)",
+    "reproduction_rate": "6 / 6 (100.0%)",
+    "repair_rate": "4 / 6 (66.7%)",
+    "median_duration_seconds": 0.04,
+    "total_cost_usd": 0.0002
+  },
+  "individual_results": [
+    {
+      "case_id": "DEV-01",
+      "type": "defect",
+      "final_status": "passes_frozen_test",
+      "expected_status": "passes_frozen_test",
+      "duration_seconds": 0.04,
+      "cost_usd": 0.0
+    },
+    {
+      "case_id": "DEV-02",
+      "type": "defect",
+      "final_status": "passes_frozen_test",
+      "expected_status": "passes_frozen_test",
+      "duration_seconds": 0.04,
+      "cost_usd": 0.0
+    },
+    {
+      "case_id": "DEV-03",
+      "type": "defect",
+      "final_status": "passes_frozen_test",
+      "expected_status": "passes_frozen_test",
+      "duration_seconds": 0.03,
+      "cost_usd": 0.0
+    },
+    {
+      "case_id": "DEV-04",
+      "type": "defect",
+      "final_status": "unresolved",
+      "expected_status": "passes_frozen_test",
+      "duration_seconds": 0.04,
+      "cost_usd": 0.0
+    },
+    {
+      "case_id": "DEV-05",
+      "type": "ambiguous",
+      "final_status": "clarification_required",
+      "expected_status": "clarification_required",
+      "duration_seconds": 0.03,
+      "cost_usd": 0.000175
+    },
+    {
+      "case_id": "HELD-01",
+      "type": "defect",
+      "final_status": "passes_frozen_test",
+      "expected_status": "passes_frozen_test",
+      "duration_seconds": 0.04,
+      "cost_usd": 0.0
+    },
+    {
+      "case_id": "HELD-02",
+      "type": "defect",
+      "final_status": "unresolved",
+      "expected_status": "passes_frozen_test",
+      "duration_seconds": 0.04,
+      "cost_usd": 0.0
+    },
+    {
+      "case_id": "HELD-03",
+      "type": "false_report",
+      "final_status": "not_reproduced",
+      "expected_status": "not_reproduced",
+      "duration_seconds": 0.01,
+      "cost_usd": 0.0
+    }
+  ]
+}

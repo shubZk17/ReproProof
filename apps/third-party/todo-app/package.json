@@ -1,0 +1,10 @@
+{
+  "name": "todomvc-pinned",
+  "version": "1.0.0",
+  "description": "Pinned TodoMVC app for ReproProof R12 third-party testing",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "license": "MIT"
+}

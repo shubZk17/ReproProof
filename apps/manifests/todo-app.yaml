@@ -1,0 +1,12 @@
+app_id: todo-app
+name: Pinned TodoMVC App (MIT License)
+description: Classic task management application with seeded filter defect
+base_url: http://localhost:3005
+start_command: node src/server.js
+app_dir: apps/third-party/todo-app
+allowed_source_paths:
+  - src/
+protected_paths:
+  - package.json
+  - package-lock.json
+startup_timeout_seconds: 15
