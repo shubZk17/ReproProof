@@ -21,7 +21,7 @@ AI code models usually change code without proving the bug exists or that the fi
                                         (SHA-256 bound)          fresh copy        suite, provenance checked
 ```
 
-State machine and transitions: [docs/architecture.md](docs/architecture.md).
+State machine: see `VALID_TRANSITIONS` in `reproproof/core/schemas.py`; verification flow in `reproproof/core/controller.py`.
 
 ---
 
@@ -85,7 +85,7 @@ Last run (2026-11-03, `MOCK_MODEL`): 3 of 8 cases executed, 5 `NOT RUN`.
 | DEV-05 (ambiguous) | hand-written clarification plan from the harness | `clarification_required` (shows only that the controller halts) |
 | HELD-03 (false report) | hand-written plan | `not_reproduced` (real Chromium run; test passes) |
 
-Reproduction and repair rates are reported as `NOT_MEASURED` in mock mode. Details: [docs/evaluation.md](docs/evaluation.md).
+Reproduction and repair rates are reported as `NOT_MEASURED` in mock mode. Raw results: `evals/results/latest_run.json`.
 
 ---
 
@@ -107,4 +107,4 @@ python -m pytest tests/ -v
 
 ## 📜 Attribution & Third-Party Notices
 
-See [docs/hackathon-contributions.md](docs/hackathon-contributions.md) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+All project code was written during the hackathon (see the dated git history). Third-party code and licences: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

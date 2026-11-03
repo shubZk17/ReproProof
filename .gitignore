@@ -60,3 +60,9 @@ temp_runs/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Agent memory (local only)
+.agent/
+
+# Project docs (local only)
+docs/
