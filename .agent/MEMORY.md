@@ -4,7 +4,7 @@ High-signal facts only. Details live in the linked files. Last reviewed: 2026-11
 
 ## Current State
 - Project: **ReproProof** (Meta Global AI Developer Hackathon, Indie Dev track). Hackathon MVP, **not production-ready**.
-- Status: DEC-005 remediation implemented in the **uncommitted** working tree (on top of `14690b3`). Validated by 97 passed, 1 skipped (`python -m pytest tests/ -v`), a real eval run, and a headless Streamlit drive. See `PROGRESS.md`.
+- Status: DEC-005 remediation committed as `39ae49c` on branch `final-hackathon-remediation` (not merged to `main`, not pushed). Validated by 97 passed, 1 skipped (`python -m pytest tests/ -v`), a real eval run, and a headless Streamlit drive. See `PROGRESS.md`.
 - Only **MOCK_MODEL** has been exercised: a hand-written plan and patch for one scripted report (DEV-01). No live-model run has ever been recorded. AI repair ability is **unmeasured**.
 - **No sandbox.** Patched apps run as the host user. LIVE_MODEL patches are not executed unless `REPROPROOF_ALLOW_UNSANDBOXED_HOST_EXECUTION=1`.
 - Key invariants (DEC-005):

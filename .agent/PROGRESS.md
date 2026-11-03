@@ -42,4 +42,4 @@ Ready for hackathon demonstration with Streamlit UI:
 - NOT run: live model; todo-app; a manual browser session of the Streamlit UI.
 
 ## Next Action
-Commit the working tree (after user approval), then TASK-026 if a key is available.
+Committed `39ae49c` on branch `final-hackathon-remediation`. Next: merge decision (user), then TASK-026 if a key is available.
