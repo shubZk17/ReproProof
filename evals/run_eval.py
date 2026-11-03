@@ -4,6 +4,7 @@ Executes genuine reproduction tests, patch applications, and clean-copy verifica
 against hidden checks without leaking assertions to the model.
 Computes and outputs honest metrics with denominators per PRD Hard Rule 7.
 Unexecuted cases are explicitly labeled NOT RUN.
+Explicitly distinguishes MOCK_MODEL from LIVE_MODEL execution.
 """
 
 from __future__ import annotations
@@ -15,18 +16,30 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List
 
+# Ensure repo root is on Python path
+repo_root = Path(__file__).resolve().parent.parent
+if str(repo_root) not in sys.path:
+    sys.path.insert(0, str(repo_root))
+
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
 from reproproof.core.controller import RunController
 from reproproof.core.model_adapter import MetaModelClient
-from reproproof.core.schemas import ActionPlan, PatchProposal, RunStatus
+from reproproof.core.schemas import ActionPlan, ModelMode, PatchProposal, RunStatus
 from reproproof.worker.runner import JobRunner
+
+
+def _rate(n: int, d: int, is_mock: bool, what: str) -> str:
+    if not d:
+        return "N/A"
+    if is_mock:  # a hand-written plan/patch says nothing about model ability
+        return f"NOT_MEASURED in MOCK_MODEL (hand-written {what}: {n} / {d} passed the pipeline)"
+    return f"{n} / {d} ({100.0 * n / d:.1f}%)"
 
 
 def run_benchmarks() -> Dict[str, Any]:
     evals_dir = Path(__file__).resolve().parent
-    repo_root = evals_dir.parent
     cases_file = evals_dir / "cases.jsonl"
     truth_file = evals_dir / "hidden" / "cases_truth.json"
     results_dir = evals_dir / "results"
@@ -51,6 +64,7 @@ def run_benchmarks() -> Dict[str, Any]:
     controller = RunController(db_path=db_path)
     model_client = MetaModelClient(mock_mode=True)
     runner = JobRunner(controller=controller, model_client=model_client)
+    mode_str = "MOCK_MODEL" if model_client.is_mock else "LIVE_MODEL"
 
     results = []
     durations = []
@@ -61,12 +75,15 @@ def run_benchmarks() -> Dict[str, Any]:
     repair_count = 0
     control_cases = 0
     control_handled_correctly = 0
-    false_successes = 0
     passes_frozen_count = 0
     not_run_count = 0
 
     print("=" * 70)
-    print("🚀 RUNNING REPROPROOF HONEST BENCHMARK EVALUATION")
+    print(f"🚀 RUNNING REPROPROOF HONEST BENCHMARK EVALUATION [{mode_str}]")
+    if mode_str == "MOCK_MODEL":
+        print("ℹ️  EVALUATION NOTICE: Running in offline deterministic mock mode.")
+        print("   DEV-01 uses pre-scripted verification templates to validate controller")
+        print("   and test invariants. Results do NOT represent AI repair capability.")
     print("=" * 70)
 
     for case in cases:
@@ -89,6 +106,7 @@ def run_benchmarks() -> Dict[str, Any]:
             results.append({
                 "case_id": case_id,
                 "type": case_type,
+                "model_mode": mode_str,
                 "final_status": "not_run",
                 "expected_status": truth.get("expected_status"),
                 "outcome_matches_expected": None,
@@ -98,7 +116,11 @@ def run_benchmarks() -> Dict[str, Any]:
             })
             continue
 
-        run = controller.create_run(app_id=app_id)
+        run = controller.create_run(
+            app_id=app_id,
+            model_mode=ModelMode.MOCK_MODEL if model_client.is_mock else ModelMode.LIVE_MODEL,
+            report_text=case["report_text"],
+        )
 
         # 1. Ambiguous control case
         if case_type == "ambiguous":
@@ -109,11 +131,8 @@ def run_benchmarks() -> Dict[str, Any]:
                 steps=[],
                 assertions=[],
             )
-            status, _, _, details = runner.run_reproduction_job(
-                run_id=run.run_id,
-                report_text=case["report_text"],
-                mock_plan=mock_ambig_plan,
-            )
+            status, _, _, details = runner.run_reproduction_job(run_id=run.run_id, mock_plan=mock_ambig_plan)
+            note = "Hand-written clarification plan supplied by the harness; shows only that the controller halts."
             expected = truth.get("expected_status")
             matches = (status.value == expected)
             if matches:
@@ -131,11 +150,8 @@ def run_benchmarks() -> Dict[str, Any]:
                 assertions=[{"action": "assert_text_visible", "text": "Warehouse Inventory"}],
             )
             # Genuine Playwright execution: test passes on running app -> classified not_reproduced
-            status, _, _, details = runner.run_reproduction_job(
-                run_id=run.run_id,
-                report_text=case["report_text"],
-                mock_plan=mock_normal_plan,
-            )
+            status, _, _, details = runner.run_reproduction_job(run_id=run.run_id, mock_plan=mock_normal_plan)
+            note = "Hand-written plan; real Chromium run against the app (test passes, so not reproduced)."
             expected = truth.get("expected_status")
             matches = (status.value == expected)
             if matches:
@@ -148,10 +164,9 @@ def run_benchmarks() -> Dict[str, Any]:
         else:
             evaluated_defects += 1
             # Step A: Real reproduction test execution
-            repro_status, test_code, test_sha, repro_details = runner.run_reproduction_job(
-                run_id=run.run_id,
-                report_text=case["report_text"],
-            )
+            repro_status, test_code, test_sha, repro_details = runner.run_reproduction_job(run_id=run.run_id)
+            note = ("Hand-written mock plan and patch (model_adapter.py); real Chromium, git apply, fresh copy, "
+                    "regression suite." if model_client.is_mock else "Live model plan and patch.")
 
             if repro_status == RunStatus.AWAITING_TEST_APPROVAL:
                 reproduced_count += 1
@@ -166,13 +181,7 @@ def run_benchmarks() -> Dict[str, Any]:
                 )
 
                 # Step C: Real source-only patch & clean verification
-                final_status, verify_details = runner.run_repair_and_verify_job(
-                    run_id=run.run_id,
-                    report_text=case["report_text"],
-                    frozen_test_code=test_code,
-                    frozen_test_sha256=test_sha,
-                    failing_assertion="assert_text_visible",
-                )
+                final_status, verify_details = runner.run_repair_and_verify_job(run_id=run.run_id)
                 status = final_status
                 if status == RunStatus.PASSES_FROZEN_TEST:
                     repair_count += 1
@@ -196,12 +205,14 @@ def run_benchmarks() -> Dict[str, Any]:
         results.append({
             "case_id": case_id,
             "type": case_type,
+            "model_mode": mode_str,
             "final_status": status.value,
             "expected_status": truth.get("expected_status"),
             "outcome_matches_expected": matches,
             "duration_seconds": round(duration, 2),
             "cost_usd": round(cost, 6),
-            "note": "Executed genuinely against running app with Playwright",
+            "note": note,
+            "hidden_check_executed": False,
         })
 
     # Compute metrics from honest evaluated cases
@@ -209,6 +220,11 @@ def run_benchmarks() -> Dict[str, Any]:
     median_time = durations[len(durations) // 2] if durations else 0.0
 
     metrics = {
+        "model_mode": mode_str,
+        "is_mock_mode": model_client.is_mock,
+        "disclaimer": ("MOCK_MODEL: no AI model was called. DEV-01 uses a hand-written plan and patch; DEV-05 and "
+                       "HELD-03 use hand-written plans. Results measure pipeline controls, not AI repair ability.")
+                      if model_client.is_mock else "LIVE_MODEL run.",
         "evaluation_summary": {
             "total_cases_in_catalog": len(cases),
             "executed_cases": len(durations),
@@ -217,10 +233,12 @@ def run_benchmarks() -> Dict[str, Any]:
             "control_cases_evaluated": control_cases,
         },
         "metrics": {
-            "reproduction_rate": f"{reproduced_count} / {evaluated_defects} ({100.0 * reproduced_count / evaluated_defects:.1f}%)" if evaluated_defects else "N/A",
-            "repair_rate": f"{repair_count} / {evaluated_defects} ({100.0 * repair_count / evaluated_defects:.1f}%)" if evaluated_defects else "N/A",
+            "model_mode": mode_str,
+            "reproduction_rate": _rate(reproduced_count, evaluated_defects, model_client.is_mock, "plan"),
+            "repair_rate": _rate(repair_count, evaluated_defects, model_client.is_mock, "patch"),
             "control_handling": f"{control_handled_correctly} / {control_cases} ({100.0 * control_handled_correctly / control_cases:.1f}%)" if control_cases else "N/A",
-            "false_success_rate": f"{false_successes} / {passes_frozen_count} (0.0%)" if passes_frozen_count else "0 / 0 (0.0%)",
+            # Hidden checks (evals/hidden) are never executed, so false successes cannot be measured.
+            "false_success_rate": f"NOT_MEASURED (hidden checks not executed; {passes_frozen_count} passes_frozen_test)",
             "median_duration_seconds": round(median_time, 2),
             "total_cost_usd": round(total_cost, 4),
         },
@@ -234,6 +252,7 @@ def run_benchmarks() -> Dict[str, Any]:
     print("\n" + "=" * 70)
     print("📈 HONEST BENCHMARK RESULTS (REPORTED WITH DENOMINATORS PER RULE 7)")
     print("=" * 70)
+    print(f"Model Mode:             {mode_str}")
     print(f"Executed Cases:         {len(durations)} / {len(cases)} (Unexecuted: {not_run_count} marked NOT RUN)")
     print(f"Reproduction Rate:      {metrics['metrics']['reproduction_rate']}")
     print(f"Repair Rate:            {metrics['metrics']['repair_rate']}")

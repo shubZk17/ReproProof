@@ -25,6 +25,7 @@ def get_sanitized_runner_env(port: int, base_url: Optional[str] = None) -> Dict[
     Security Invariant:
     MODEL_API_KEY, credentials, and parent auth tokens are NEVER inherited.
     Sets NODE_PATH so temp execution workspaces resolve @playwright/test cleanly.
+    Allows runner processes to run tests in runs/ via PLAYWRIGHT_ALLOW_RUNS=1.
     """
     repo_root = Path(__file__).resolve().parent.parent.parent
     node_modules_dir = str(repo_root / "node_modules")
@@ -43,6 +44,7 @@ def get_sanitized_runner_env(port: int, base_url: Optional[str] = None) -> Dict[
         "APPDATA": os.environ.get("APPDATA", ""),
         "LOCALAPPDATA": os.environ.get("LOCALAPPDATA", ""),
         "NODE_PATH": node_path_val,
+        "PLAYWRIGHT_ALLOW_RUNS": "1",
     }
 
     # Scrub any secret or sensitive tokens
@@ -81,3 +83,18 @@ def kill_process_tree(proc: subprocess.Popen) -> None:
             proc.kill()
         except Exception:
             pass
+
+
+def force_rmtree(path: str) -> None:
+    """rmtree that also removes read-only files (git objects are read-only on Windows)."""
+    import shutil
+    import stat
+
+    def _retry(func, p, _exc):
+        os.chmod(p, stat.S_IWRITE)
+        func(p)
+
+    try:
+        shutil.rmtree(path, onexc=_retry)
+    except OSError:
+        pass  # still locked by a dying process; never mask the caller's result

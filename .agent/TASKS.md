@@ -7,7 +7,10 @@ Search for an existing task before adding one. When a task is done, move it to C
 _(none)_
 
 ## Pending
-_(none — hackathon MVP objectives fully met and verified)_
+- [ ] TASK-026 [P2] Live-model run with a real `MODEL_API_KEY` (planning only unless the host-execution opt-in is set on a disposable machine). Done when: a LIVE_MODEL run is recorded with its outcome, success or failure.
+- [ ] TASK-027 [P3] Real sandbox (container/VM) for patched-app execution so the LIVE_MODEL host-execution gate can be removed. Done when: execution runs without host FS/network/credential access.
+- [ ] TASK-028 [P3] Execute hidden checks in evals so the false-success rate can be measured; run the todo-app and other NOT RUN cases.
+- [ ] TASK-029 [P3] Classifier (H-10) still treats any failed `expect(...)` as the intended assertion, even when the locator itself is wrong. Human approval is the only guard.
 
 ## Blocked
 _(none)_
@@ -31,3 +34,11 @@ _(none)_
 - [x] TASK-015 [P0] Enforce controller-owned state transitions in SQLite: bind human approval to test SHA-256 hash, reject duplicate approval, require verified evidence before transitioning to `passes_frozen_test`. Add `tests/test_controller_invariants.py`. Done 2026-11-03.
 - [x] TASK-016 [P0] Implement genuine Playwright test execution environment: package configuration, ephemeral port allocation, process tree termination, runner environment sanitization (scrub `MODEL_API_KEY`). Add full end-to-end integration test `tests/test_e2e_workflow.py`. Done 2026-11-03.
 - [x] TASK-017 [P0] Eliminate fabricated benchmark metrics: refactor `evals/run_eval.py` to execute real reproduction and clean verification with Playwright; report honest results with explicit denominators; mark out-of-scope cases `NOT RUN`; update UI and docs. Done 2026-11-03.
+- [x] TASK-018 [P0] (partly ineffective, superseded by TASK-025) Eliminate fabricated evidence bundle: refactor `EvidenceExporter.create_bundle_from_run` and `app.py` to derive all evidence directly from controller run records, frozen test SHA-256, and verified patch output. Add `tests/test_remediation_evidence.py`. Done 2026-11-03.
+- [x] TASK-019 [P0] Implement explicit model-mode tracking (`LIVE_MODEL` vs `MOCK_MODEL`): persist in `RunRecord`, display prominent badge and warning banner in UI, disclose deterministic template in evaluation, docs, and README. Done 2026-11-03.
+- [x] TASK-020 [P0] Correct regression result semantics with explicit `RegressionStatus` enum (`PASSED`, `FAILED`, `NOT_RUN`, `ERROR`): ensure skipped suites are NOT_RUN, errors are ERROR, only actual successes are PASSED. Add `tests/test_remediation_regression.py`. Done 2026-11-03.
+- [x] TASK-021 [P0] Eliminate controller verification bypass (`_internal_evidence_verified` removed): require atomic evidence verification in `record_verification_result`, validate test hash and patch hash match, reject mutated approvals and placeholder hashes. Add `tests/test_remediation_security.py`. Done 2026-11-03.
+- [x] TASK-022 [P0] Fix allowed-path prefix bypass (`srcX/evil.js`, `src_evil/`) in `patcher.py` and protocol-relative navigation (`//evil.com`, `/\\evil.com`, `\\evil.com`) in `ActionStep.validate_path`. Add adversarial tests in `tests/test_remediation_security.py`. Done 2026-11-03.
+- [x] TASK-023 [P0] Preserve screenshot evidence: ensure reproduction before-screenshot is backed up and never overwritten by verification Playwright execution; maintain distinct paths and timestamps for both screenshots. Done 2026-11-03.
+- [x] TASK-024 [P0] ~~(claims partly wrong, see TASK-025)~~ Cleanup: prevent `runs/` from test discovery via `playwright.config.js` and `PLAYWRIGHT_ALLOW_RUNS`, clean up temporary verify files, fix temp dir leaks on patch validation failures, remove debug prints, and document execution boundaries. Done 2026-11-03.
+- [x] TASK-025 [P0] Final hackathon remediation (DEC-005): controller-executed verification + provenance, approval bound to stored test, live-patch host-execution gate, scripted-only mock, re-hashed evidence incl. screenshots, working screenshot preservation, tab-stripping nav bypass, temp-dir leak (read-only git objects), honest eval metrics, docs. Done 2026-11-03 (97 passed, 1 skipped; real E2E + UI drive).

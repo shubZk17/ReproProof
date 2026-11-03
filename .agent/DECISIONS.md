@@ -108,3 +108,63 @@ Option 2. Implement robust architectural defenses:
 - Eliminates the RCE attack surface.
 - Ensures patch integrity.
 - Restores complete honesty and credibility to the project.
+
+
+---
+
+## DEC-004: Final Remediation — Non-Fabricated Evidence, Explicit Regression Semantics, Controller Integrity, and Execution Disclosure
+Date: 2026-11-03
+Status: Superseded by DEC-005
+
+### Context / Problem
+A secondary independent audit identified remaining blockers before hackathon demo:
+1. `app.py` exported hardcoded evidence bundle fields (patch diff, expected behavior, PASSED check results).
+2. The UI silently ran mock mode without clear user notification or audit trails.
+3. Verifier initialized `regression_passed = True`, misrepresenting skipped or failed suites.
+4. Public caller could pass `_internal_evidence_verified=True` to bypass controller evidence verification.
+5. Path validation in `patcher.py` was vulnerable to allowed-path prefix bypass (e.g. `srcX/evil.js` matching `src`).
+6. Protocol-relative navigation (`//evil.com`, `/\evil.com`) was not rejected.
+7. Verification test runs overwrote reproduction screenshots.
+8. Execution environment was not clearly documented as a temporary directory rather than an OS sandbox.
+
+### Decisions
+1. **Dynamic Evidence Export:** `EvidenceExporter.create_bundle_from_run` pulls all evidence directly from controller run records and verified disk artifacts. Verifies SHA-256 and records explicit integrity checks (`VALID`, `FAILED`, `MISSING`).
+2. **Explicit Model-Mode Tracking:** `ModelMode` (`LIVE_MODEL` vs `MOCK_MODEL`) is tracked in schema, DB, UI badges/warning banners, evidence bundles, and evaluation reports. Disclose that DEV-01 in mock mode uses a deterministic template.
+3. **Explicit Regression Semantics:** Replaced boolean with `RegressionStatus` enum (`PASSED`, `FAILED`, `NOT_RUN`, `ERROR`). Skipped suites are `NOT_RUN`. Controller only grants `PASSES_FROZEN_TEST` when regression is `PASSED`.
+4. **Authoritative Controller Enforcement:** Deleted `_internal_evidence_verified` bypass parameter. Calling `transition(..., PASSES_FROZEN_TEST)` is unconditionally prohibited. Only internal verification result recording with matching hashes can grant the state.
+5. **Path & URL Hardening:** Canonical path validation with explicit directory boundary checks (`clean_path == allowed or clean_path.startswith(allowed + "/")`), rejecting prefix bypasses. Schema rejects all protocol-relative and backslash URLs.
+6. **Screenshot Preservation:** Reproduction screenshots are backed up before verification and restored, with verification screenshots preserved separately with genuine timestamps.
+7. **Execution Boundary Disclosure:** Documented clearly that temporary directories provide replay isolation, not OS sandboxing. Processes run on trusted allowlisted demo apps.
+
+### Consequences
+- Eliminates fabricated evidence and bypass vectors.
+- 41/41 unit, integration, and security tests pass.
+- Demo is credible, safe, and transparent for hackathon presentation.
+
+---
+
+## DEC-005: Controller-executed verification, approval bound to stored test, no host execution of live-model patches
+Date: 2026-11-03 · Status: Accepted · Supersedes: DEC-004
+
+### Context
+Session 5 checked DEC-004's implementation against the code and found it incomplete:
+- `record_verification_result(passed_frozen_test=True, passed_regression=True, ...)` was public, so any caller could still reach `passes_frozen_test` with no execution (the bypass had been renamed, not removed).
+- Approval accepted any non-"placeholder" string when no reproduced test was stored (e.g. `"abc123sha"`).
+- Screenshot backup/restore never ran: its regex never matched the compiled test (ERR-001).
+- Mock mode still produced a plausible plan for any report.
+- `EvidenceExporter.create_bundle` (caller-supplied values) still existed.
+- `/<TAB>/evil.example` passed path validation (URL parsers strip tabs, which leaves `//evil.example`).
+
+### Decision
+1. `RunController.run_verification(run_id)` is the only path to `passes_frozen_test`. It reads the frozen test and patch from SQLite, loads the allowlisted manifest itself, runs `FreshCopyVerifier`, and checks the result's run id, test hash, patch hash and source-tree hash (`tree_sha256`, recorded at reproduction). `record_verification_result` was deleted.
+2. Approval requires the reproduced test stored in `REPRODUCING`, a 64-hex hash equal to its hash, matching code if supplied, and a non-empty approver. `record_plan`/`record_reproduction`/`record_patch` are rejected outside RECEIVED/REPRODUCING/PATCHING.
+3. Execution boundary: with no sandbox available (no Docker on host), `LIVE_MODEL` patches are not executed unless `REPROPROOF_ALLOW_UNSANDBOXED_HOST_EXECUTION=1`. The run ends `unresolved` with the patch recorded.
+4. `MOCK_MODEL` accepts only `MOCK_SCRIPTED_REPORT` (DEV-01) and refuses other reports with `clarification_required`. Model ids are `mock:hand-written-plan` / `mock:hand-written-patch`, with 0 tokens.
+5. Evidence: only `create_bundle_from_run`. Every artifact (including screenshots, hashed at capture) is re-hashed; any FAILED/CORRUPTED, or anything not VALID on a success claim, gives `evidence_valid=false` and `INVALID_EVIDENCE` check results.
+6. Screenshots: the reproduction capture is copied to the immutable `runs/repro_<run_id>.png`; verification moves its capture to `runs/verify_<run_id>_<patch12>.png`.
+7. Evals report reproduction/repair rate as `NOT_MEASURED` in mock mode, and the false-success rate as `NOT_MEASURED` (hidden checks are never executed).
+
+### Consequences
+- A public caller cannot manufacture success short of monkeypatching or writing to SQLite directly. Both are outside the API; direct DB edits are caught by the exporter's integrity checks.
+- Live-model repair is not demonstrable on this host without the explicit opt-in.
+- Old DB rows with NULL `model_mode` can't be loaded by `get_run` (RunRecord requires a mode). They are listed only via `list_runs`.

@@ -2,6 +2,7 @@
 
 Provides the 4-stage workflow: Report -> Reproduce -> Repair -> Check.
 Displays concise user-facing status, human approval controls, and evidence downloads.
+Strictly derived from actual controller-owned run records without hard-coding.
 """
 
 from __future__ import annotations
@@ -14,14 +15,14 @@ import yaml
 
 from reproproof.core.controller import RunController
 from reproproof.core.limits import DEFAULT_LIMITS
-from reproproof.core.model_adapter import MetaModelClient
-from reproproof.core.schemas import ActionPlan, PatchProposal, RunStatus
+from reproproof.core.model_adapter import MOCK_SCRIPTED_REPORT, MetaModelClient
+from reproproof.core.schemas import ActionPlan, ModelMode, PatchProposal, RunStatus
 from reproproof.worker.runner import JobRunner
 from reproproof.core.evidence import EvidenceExporter
 
 
 st.set_page_config(
-    page_title="ReproProof — Autonomous Bug Reproduction & Verification",
+    page_title="ReproProof — Bug Reproduction & Fresh-Copy Checking",
     page_icon="🛡️",
     layout="wide",
 )
@@ -36,11 +37,13 @@ st.markdown("""
     .badge-success { background: #dcfce7; color: #166534; }
     .badge-warn { background: #fef9c3; color: #854d0e; }
     .badge-fail { background: #fee2e2; color: #991b1b; }
+    .badge-mock { background: #ffedd5; color: #9a3412; font-weight: bold; }
+    .badge-live { background: #e0e7ff; color: #3730a3; font-weight: bold; }
 </style>
 """, unsafe_allow_html=True)
 
 st.markdown('<div class="main-title">🛡️ ReproProof</div>', unsafe_allow_html=True)
-st.markdown('<div class="subtitle">Autonomous browser test reproduction · Human test freeze · Source-only repair · Fresh-copy verification</div>', unsafe_allow_html=True)
+st.markdown('<div class="subtitle">Browser test reproduction · Human test freeze · Source-only repair · Fresh-copy verification</div>', unsafe_allow_html=True)
 
 # Initialize controller and runner in session state
 if "controller" not in st.session_state:
@@ -73,16 +76,19 @@ selected_app_id = st.sidebar.selectbox(
 app_info = manifests[selected_app_id]
 st.sidebar.info(f"**Base URL:** {app_info.get('base_url')}\n\n**Allowed Paths:** {', '.join(app_info.get('allowed_source_paths', []))}")
 
-# Mode info
-has_api_key = bool(os.environ.get("MODEL_API_KEY"))
-if has_api_key:
-    st.sidebar.success("Meta AI API Key active (`muse-spark-1.3`)")
+# Mode info (taken from the runner's actual client, not guessed from the environment)
+is_mock = runner.model_client.is_mock
+if not is_mock:
+    st.sidebar.success("🟢 **LIVE MODEL** (`muse-spark-1.3`)")
+    st.sidebar.caption("Model-generated patches are NOT executed on this host unless "
+                       "REPROPROOF_ALLOW_UNSANDBOXED_HOST_EXECUTION=1 is set. There is no sandbox.")
 else:
-    st.sidebar.warning("Offline Mode: Deterministic mock active")
+    st.sidebar.error("⚠️ **MOCK MODEL — NO AI**")
+    st.sidebar.caption("MODEL_API_KEY is not set. No AI model is called. Plan and patch are hand-written templates.")
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("### Hard Rules Active")
-st.sidebar.caption("✓ Models only propose — controller owns run state\n\n✓ Human approval required before patching\n\n✓ Tests frozen with SHA-256\n\n✓ Source-only patches (no tests/configs)\n\n✓ Verified only via `passes_frozen_test` on clean copy")
+st.sidebar.caption("✓ Models only propose — controller owns run state\n\n✓ Human approval required before patching\n\n✓ Tests frozen with SHA-256\n\n✓ Source-only patches (no tests/configs)\n\n✓ Success only via `passes_frozen_test` on clean copy\n\n⚠ Not a sandbox: trusted demo apps only")
 
 
 # --- Main 4-Stage Flow: Report -> Reproduce -> Repair -> Check ---
@@ -90,6 +96,11 @@ st.sidebar.caption("✓ Models only propose — controller owns run state\n\n✓
 tab_pipeline, tab_evals, tab_audit = st.tabs(["⚡ Execution Pipeline", "📊 Benchmark Evals", "📜 Audit & Runs"])
 
 with tab_pipeline:
+    if is_mock:
+        st.error("🟧 **MOCK MODEL — DEMO MODE, NO AI MODEL IS CALLED.** The reproduction plan and the patch "
+                 "are hand-written templates for one scripted inventory-demo bug. The browser run, `git apply`, "
+                 "fresh-copy check and regression suite are real. This is **not** an AI repair result.")
+
     stage_col1, stage_col2, stage_col3, stage_col4 = st.columns(4)
 
     run_record = controller.get_run(st.session_state.current_run_id) if st.session_state.current_run_id else None
@@ -115,9 +126,13 @@ with tab_pipeline:
         status_color = "badge-success" if run_record.status == RunStatus.PASSES_FROZEN_TEST else (
             "badge-warn" if "awaiting" in run_record.status.value or "patching" in run_record.status.value else "badge-fail"
         )
+        mode_badge = "badge-mock" if run_record.model_mode == ModelMode.MOCK_MODEL else "badge-live"
         st.markdown(
-            f'**Run ID:** `{run_record.run_id}` | **Status:** <span class="badge-status {status_color}">{run_record.status.value.upper()}</span> '
-            f'| **Cost:** `${run_record.usage.cost_usd:.4f}` | **Attempts:** `{run_record.patch_attempts}/2`',
+            f'**Run ID:** `{run_record.run_id}` | '
+            f'**Mode:** <span class="badge-status {mode_badge}">{run_record.model_mode.value}</span> | '
+            f'**Status:** <span class="badge-status {status_color}">{run_record.status.value.upper()}</span> | '
+            f'**Regression:** `{run_record.regression_status.value}` | '
+            f'**Cost:** `${run_record.usage.cost_usd:.4f}` | **Attempts:** `{run_record.patch_attempts}/2`',
             unsafe_allow_html=True,
         )
         if run_record.status_reason:
@@ -125,22 +140,17 @@ with tab_pipeline:
 
     # Stage 1: Report Intake
     with st.expander("Stage 1: Bug Report Intake", expanded=(run_record is None or run_record.status == RunStatus.RECEIVED)):
-        default_report = "When I click 'Delete Widget B', Widget A is incorrectly deleted and Widget B remains visible."
-        report_text = st.text_area("Bug Report Description", value=default_report, height=90)
-        uploaded_screenshot = st.file_uploader("Upload Bug Screenshot (optional)", type=["png", "jpg", "jpeg"])
+        report_text = st.text_area(
+            "Bug Report Description", value=MOCK_SCRIPTED_REPORT, height=90, disabled=is_mock,
+            help="Mock mode only supports this scripted report." if is_mock else None,
+        )
 
-        if st.button("Start Autonomous Reproduction", type="primary"):
-            new_run = controller.create_run(app_id=selected_app_id)
+        if st.button("Start Reproduction", type="primary"):
+            new_run = controller.create_run(app_id=selected_app_id, model_mode=runner.model_mode,
+                                            report_text=report_text)
             st.session_state.current_run_id = new_run.run_id
-            st.session_state.report_text = report_text
-
-            with st.spinner("Executing model planning and browser reproduction..."):
-                status, test_code, test_sha, details = runner.run_reproduction_job(
-                    run_id=new_run.run_id,
-                    report_text=report_text,
-                )
-                st.session_state.test_code = test_code
-                st.session_state.test_sha = test_sha
+            with st.spinner("Planning and running the reproduction test in Chromium..."):
+                runner.run_reproduction_job(run_id=new_run.run_id)
             st.rerun()
 
     # Stage 2: Reproduction Results & Human Approval Gate
@@ -156,8 +166,7 @@ with tab_pipeline:
     ]:
         with st.expander("Stage 2: Reproduction & Test Approval", expanded=(run_record.status == RunStatus.AWAITING_TEST_APPROVAL)):
             st.markdown("### Synthesized Playwright Test")
-            test_display = st.session_state.get("test_code", "// Test code not loaded")
-            st.code(test_display, language="javascript")
+            st.code(run_record.reproduced_test_code or "// No reproduction test was executed", language="javascript")
 
             if run_record.test_sha256:
                 st.success(f"🔒 **Frozen Test SHA-256:** `{run_record.test_sha256}`")
@@ -169,10 +178,11 @@ with tab_pipeline:
                 c1, c2 = st.columns([1, 1])
                 with c1:
                     if st.button("✅ Approve Test (Freeze Test & Proceed to Repair)", type="primary"):
+                        # Binds approval to the exact test shown above (controller re-checks the hash).
                         controller.record_human_approval(
                             run_id=run_record.run_id,
-                            test_sha256=st.session_state.get("test_sha", "sha256_placeholder"),
-                            frozen_test_code=st.session_state.get("test_code"),
+                            test_sha256=run_record.reproduced_test_sha256 or "",
+                            frozen_test_code=run_record.reproduced_test_code,
                             approved_by="human_operator",
                         )
                         st.rerun()
@@ -196,42 +206,43 @@ with tab_pipeline:
                 st.info("Test is frozen. Ready to generate source-only patch and verify on fresh app copy.")
                 if st.button("Generate Patch & Verify on Clean Copy", type="primary"):
                     with st.spinner("Generating source patch and verifying on fresh temp copy..."):
-                        final_status, details = runner.run_repair_and_verify_job(
-                            run_id=run_record.run_id,
-                            report_text=st.session_state.get("report_text", ""),
-                            frozen_test_code=st.session_state.get("test_code", ""),
-                            frozen_test_sha256=run_record.test_sha256 or st.session_state.get("test_sha", ""),
-                            failing_assertion="assert_text_visible",
-                        )
+                        runner.run_repair_and_verify_job(run_id=run_record.run_id)
                     st.rerun()
 
+            if run_record.patch_diff:
+                kind = ("hand-written mock template" if run_record.model_mode == ModelMode.MOCK_MODEL
+                        else "model-proposed")
+                st.markdown(f"### Patch ({kind})")
+                st.code(run_record.patch_diff, language="diff")
+
             if run_record.status == RunStatus.PASSES_FROZEN_TEST:
-                st.balloons()
-                st.success("🎉 **PASSES_FROZEN_TEST:** Fresh copy verification succeeded! The byte-identical frozen test and all regression checks passed.")
-
-                # Export evidence bundle
-                bundle = runner.evidence_exporter.create_bundle(
-                    run_record=run_record,
-                    report_text=st.session_state.get("report_text", ""),
-                    expected_behavior="Target item is removed while existing items remain visible.",
-                    intended_assertion="assert_text_visible",
-                    frozen_test_code=st.session_state.get("test_code", ""),
-                    test_sha256=run_record.test_sha256 or "",
-                    patch_diff="--- a/src/inventory.js\n+++ b/src/inventory.js\n@@ -30,2 +30,2 @@\n- itemsStore.splice(0, 1);\n+ itemsStore = itemsStore.filter(i => i.id !== id);\n",
-                    check_results={"frozen_test": "PASSED", "regression_suite": "PASSED"},
-                )
-                zip_path = runner.evidence_exporter.export_zip(bundle)
-
-                with open(zip_path, "rb") as zf:
-                    st.download_button(
-                        label="📦 Download Audit Evidence Bundle (ZIP)",
-                        data=zf.read(),
-                        file_name=f"reproproof_bundle_{run_record.run_id[:8]}.zip",
-                        mime="application/zip",
-                    )
-
+                msg = ("**PASSES_FROZEN_TEST:** the byte-identical frozen test and the protected regression "
+                       "suite both passed on a fresh patched copy.")
+                if run_record.model_mode == ModelMode.MOCK_MODEL:
+                    msg += " The patch was a **hand-written mock template**, not AI-generated."
+                st.success(msg)
             elif run_record.status == RunStatus.UNRESOLVED:
-                st.error("❌ **UNRESOLVED:** The patch was unable to pass fresh copy verification within the attempt budget.")
+                st.error(f"**UNRESOLVED:** {run_record.status_reason or ''}")
+
+    # Evidence bundle for any run that reached a terminal state
+    if run_record and run_record.status in [
+        RunStatus.PASSES_FROZEN_TEST, RunStatus.UNRESOLVED, RunStatus.NOT_REPRODUCED,
+        RunStatus.ENVIRONMENT_ERROR, RunStatus.TEST_REJECTED, RunStatus.CLARIFICATION_REQUIRED,
+    ]:
+        bundle = runner.evidence_exporter.create_bundle_from_run(run_id=run_record.run_id)
+        if bundle.evidence_valid:
+            st.caption("Evidence integrity checks: all stored artifacts match their recorded hashes.")
+        else:
+            st.error("Evidence integrity FAILED: " + "; ".join(bundle.integrity_failures))
+        st.json(bundle.check_results)
+        zip_path = runner.evidence_exporter.export_zip(bundle)
+        with open(zip_path, "rb") as zf:
+            st.download_button(
+                label=f"📦 Download Evidence Bundle (ZIP, {run_record.model_mode.value})",
+                data=zf.read(),
+                file_name=f"reproproof_bundle_{run_record.run_id[:8]}_{run_record.model_mode.value}.zip",
+                mime="application/zip",
+            )
 
 # Tab 2: Benchmark Evaluation View (R14)
 with tab_evals:
@@ -244,11 +255,15 @@ with tab_evals:
             eval_data = json.load(ef)
 
         metrics = eval_data.get("metrics", {})
+        if eval_data.get("model_mode") == "MOCK_MODEL":
+            st.error("These results were produced in MOCK_MODEL mode with hand-written plans and patches. "
+                     "They measure the pipeline's controls, not AI repair ability.")
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Reproduction Rate", metrics.get("reproduction_rate", "N/A"))
         c2.metric("Repair Rate (passes_frozen_test)", metrics.get("repair_rate", "N/A"))
         c3.metric("Control Handling", metrics.get("control_handling", "N/A"))
         c4.metric("False Success Rate", metrics.get("false_success_rate", "N/A"))
+        st.caption(f"Model mode: **{eval_data.get('model_mode', 'UNKNOWN')}**")
 
         st.json(eval_data)
     else:
@@ -262,9 +277,8 @@ with tab_evals:
 # Tab 3: Audit & Run History
 with tab_audit:
     st.markdown("### 📜 Run History & State Transitions")
-    with controller._get_connection() as conn:
-        runs_df = conn.execute("SELECT run_id, app_id, status, patch_attempts, cost_usd, created_at FROM runs ORDER BY created_at DESC").fetchall()
-        if runs_df:
-            st.table([dict(r) for r in runs_df])
-        else:
-            st.caption("No runs recorded yet.")
+    runs_rows = controller.list_runs()
+    if runs_rows:
+        st.table(runs_rows)
+    else:
+        st.caption("No runs recorded yet.")

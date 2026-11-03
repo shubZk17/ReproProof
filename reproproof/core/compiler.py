@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from typing import Tuple
 from reproproof.core.schemas import ActionPlan
 
@@ -33,8 +34,11 @@ test('__TEST_NAME__', async ({ page, baseURL }) => {
   for (let i = 0; i < PLAN.steps.length; i++) {
     const step = PLAN.steps[i];
     if (step.action === 'goto') {
-      const targetUrl = new URL(step.path || '/', baseURL).toString();
-      await page.goto(targetUrl);
+      const targetUrl = new URL(step.path || '/', baseURL);
+      if (targetUrl.origin !== new URL(baseURL).origin) {
+        throw new Error('ReproProof: navigation outside the app origin was rejected');
+      }
+      await page.goto(targetUrl.toString());
     } else if (step.action === 'click') {
       if (step.role && step.name) {
         await page.getByRole(step.role, { name: step.name }).first().click();
@@ -102,3 +106,9 @@ test('__TEST_NAME__', async ({ page, baseURL }) => {
 
         sha256 = hashlib.sha256(code.encode("utf-8")).hexdigest()
         return code, sha256
+
+    @staticmethod
+    def extract_plan(test_code: str) -> dict:
+        """Recovers the embedded plan dict (incl. screenshot_path) from compiled test code; {} if absent."""
+        m = re.search(r"^const PLAN = JSON\.parse\((.*)\);$", test_code, re.M)
+        return json.loads(json.loads(m.group(1))) if m else {}

@@ -1,4 +1,7 @@
 {
+  "model_mode": "MOCK_MODEL",
+  "is_mock_mode": true,
+  "disclaimer": "MOCK_MODEL: no AI model was called. DEV-01 uses a hand-written plan and patch; DEV-05 and HELD-03 use hand-written plans. Results measure pipeline controls, not AI repair ability.",
   "evaluation_summary": {
     "total_cases_in_catalog": 8,
     "executed_cases": 3,
@@ -7,27 +10,31 @@
     "control_cases_evaluated": 2
   },
   "metrics": {
-    "reproduction_rate": "1 / 1 (100.0%)",
-    "repair_rate": "1 / 1 (100.0%)",
+    "model_mode": "MOCK_MODEL",
+    "reproduction_rate": "NOT_MEASURED in MOCK_MODEL (hand-written plan: 1 / 1 passed the pipeline)",
+    "repair_rate": "NOT_MEASURED in MOCK_MODEL (hand-written patch: 1 / 1 passed the pipeline)",
     "control_handling": "2 / 2 (100.0%)",
-    "false_success_rate": "0 / 1 (0.0%)",
-    "median_duration_seconds": 3.58,
-    "total_cost_usd": 0.0011
+    "false_success_rate": "NOT_MEASURED (hidden checks not executed; 1 passes_frozen_test)",
+    "median_duration_seconds": 5.72,
+    "total_cost_usd": 0.0
   },
   "individual_results": [
     {
       "case_id": "DEV-01",
       "type": "defect",
+      "model_mode": "MOCK_MODEL",
       "final_status": "passes_frozen_test",
       "expected_status": "passes_frozen_test",
       "outcome_matches_expected": true,
-      "duration_seconds": 15.77,
-      "cost_usd": 0.000775,
-      "note": "Executed genuinely against running app with Playwright"
+      "duration_seconds": 22.12,
+      "cost_usd": 0.0,
+      "note": "Hand-written mock plan and patch (model_adapter.py); real Chromium, git apply, fresh copy, regression suite.",
+      "hidden_check_executed": false
     },
     {
       "case_id": "DEV-02",
       "type": "defect",
+      "model_mode": "MOCK_MODEL",
       "final_status": "not_run",
       "expected_status": "passes_frozen_test",
       "outcome_matches_expected": null,
@@ -38,6 +45,7 @@
     {
       "case_id": "DEV-03",
       "type": "defect",
+      "model_mode": "MOCK_MODEL",
       "final_status": "not_run",
       "expected_status": "passes_frozen_test",
       "outcome_matches_expected": null,
@@ -48,6 +56,7 @@
     {
       "case_id": "DEV-04",
       "type": "defect",
+      "model_mode": "MOCK_MODEL",
       "final_status": "not_run",
       "expected_status": "passes_frozen_test",
       "outcome_matches_expected": null,
@@ -58,16 +67,19 @@
     {
       "case_id": "DEV-05",
       "type": "ambiguous",
+      "model_mode": "MOCK_MODEL",
       "final_status": "clarification_required",
       "expected_status": "clarification_required",
       "outcome_matches_expected": true,
-      "duration_seconds": 0.02,
-      "cost_usd": 0.000175,
-      "note": "Executed genuinely against running app with Playwright"
+      "duration_seconds": 0.03,
+      "cost_usd": 0.0,
+      "note": "Hand-written clarification plan supplied by the harness; shows only that the controller halts.",
+      "hidden_check_executed": false
     },
     {
       "case_id": "HELD-01",
       "type": "defect",
+      "model_mode": "MOCK_MODEL",
       "final_status": "not_run",
       "expected_status": "passes_frozen_test",
       "outcome_matches_expected": null,
@@ -78,6 +90,7 @@
     {
       "case_id": "HELD-02",
       "type": "defect",
+      "model_mode": "MOCK_MODEL",
       "final_status": "not_run",
       "expected_status": "passes_frozen_test",
       "outcome_matches_expected": null,
@@ -88,12 +101,14 @@
     {
       "case_id": "HELD-03",
       "type": "false_report",
+      "model_mode": "MOCK_MODEL",
       "final_status": "not_reproduced",
       "expected_status": "not_reproduced",
       "outcome_matches_expected": true,
-      "duration_seconds": 3.58,
-      "cost_usd": 0.000175,
-      "note": "Executed genuinely against running app with Playwright"
+      "duration_seconds": 5.72,
+      "cost_usd": 0.0,
+      "note": "Hand-written plan; real Chromium run against the app (test passes, so not reproduced).",
+      "hidden_check_executed": false
     }
   ]
 }

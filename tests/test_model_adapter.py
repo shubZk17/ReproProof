@@ -2,7 +2,7 @@
 
 import pytest
 from reproproof.core.schemas import ActionPlan, PatchProposal, RunStatus, VALID_TRANSITIONS
-from reproproof.core.model_adapter import MetaModelClient
+from reproproof.core.model_adapter import MOCK_PLAN_ID, MOCK_SCRIPTED_REPORT, MetaModelClient
 
 
 def test_schemas_strictness():
@@ -46,11 +46,14 @@ def test_meta_model_client_mock():
     assert client.get_model_for_attempt(1) == "muse-spark-1.3"
     assert client.get_model_for_attempt(2) == "muse-wonder-1.0"
 
+    # Mock is not an AI model: an unscripted report is refused, not "analysed"
     plan, model_id, in_t, out_t = client.plan_reproduction("Delete button deletes wrong item", routes=["/"])
-    assert isinstance(plan, ActionPlan)
-    assert in_t > 0
-    assert out_t > 0
-    assert "mock" in model_id
+    assert plan.clarification_question and "not analysed" in plan.clarification_question
+    assert not plan.steps and model_id == MOCK_PLAN_ID and in_t == out_t == 0
+
+    plan, model_id, _, _ = client.plan_reproduction(MOCK_SCRIPTED_REPORT, routes=["/"])
+    assert isinstance(plan, ActionPlan) and plan.steps and plan.clarification_question is None
+    assert model_id == MOCK_PLAN_ID
 
     patch, model_id_p, in_tp, out_tp = client.propose_patch(
         attempt=1,

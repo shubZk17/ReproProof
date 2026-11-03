@@ -85,3 +85,62 @@ This log records verified runs, test results, and command executions. No task is
   - Control Handling: **2 / 2 (100.0%)** (ambiguous -> `clarification_required`, false report -> `not_reproduced`)
   - False Success Rate: **0 / 1 (0.0%)**
   - Median Duration: **3.58s**
+
+
+---
+
+## Phase 3: Final Hackathon Remediation Verification
+- **Date:** 2026-11-03
+- **Test Suite Command:** `python -m pytest tests/ -v`
+- **Result:** 41 / 41 passed in 18.17s.
+
+### 1. Evidence Exporter & Artifact Integrity Suite
+- **File:** `tests/test_remediation_evidence.py`
+- **Result:** 4/4 passed (0.28s).
+- **Verified Behaviors:**
+  - Non-fabricated evidence bundle: all fields derived from controller run records and disk artifacts.
+  - Frozen test code tampering detected via SHA-256 validation (`artifacts_integrity["frozen_test"] = FAILED: SHA-256 mismatch`).
+  - Patch tampering detected by comparing against verification evidence SHA-256 (`artifacts_integrity["patch"] = FAILED: patch mismatch`).
+  - Missing plan and patch artifacts honestly reported as `MISSING` / `NOT_RUN`.
+
+### 2. Regression Result Semantics Suite
+- **File:** `tests/test_remediation_regression.py`
+- **Result:** 5/5 passed (0.16s).
+- **Verified Behaviors:**
+  - Frozen test passes + regression passes -> transitions to `passes_frozen_test` with `RegressionStatus.PASSED`.
+  - Frozen test passes + regression fails -> status is `PATCHING` (retry) with `RegressionStatus.FAILED`; never marked success.
+  - Frozen test fails -> regression suite skipped with `RegressionStatus.NOT_RUN`.
+  - Regression execution error -> `RegressionStatus.ERROR`.
+  - Missing regression configuration -> `RegressionStatus.NOT_RUN`.
+
+### 3. Controller Bypass, Path Security, & Screenshot Preservation Suite
+- **File:** `tests/test_remediation_security.py`
+- **Result:** 7/7 passed (0.26s).
+- **Verified Behaviors:**
+  - Direct transition to `passes_frozen_test` unconditionally rejected (`StateTransitionError`).
+  - Public bypass parameter `_internal_evidence_verified` removed; passing unexpected keyword arguments raises `TypeError`.
+  - Human approval rejects placeholder hashes (`sha256_placeholder`, empty strings) and empty test code.
+  - Human approval strictly binds to reproduced test; approval of mutated test rejected.
+  - Allowed-path prefix bypass (`srcX/evil.js`, `src_evil/`) rejected when `src/` is allowed.
+  - Protocol-relative (`//evil.com`, `/\\evil.com`, `\\evil.com`) URL paths rejected.
+  - Reproduction before-screenshot is preserved intact and never overwritten by verification Playwright execution.
+
+### 4. Benchmark Execution Verification
+- **Command:** `python evals/run_eval.py`
+- **Result:** Exit code 0, 3 executed cases, 5 unexecuted cases marked `NOT RUN`.
+- **Verified Metrics:**
+  - Mode: `MOCK_MODEL` clearly disclosed in output and `latest_run.json`.
+  - Reproduction Rate: 1 / 1 (100.0%)
+  - Repair Rate: 1 / 1 (100.0%)
+  - Control Handling: 2 / 2 (100.0%)
+  - False Success Rate: 0 / 1 (0.0%)
+  - Median Duration: 3.85s
+
+---
+
+## Session 5 (2026-11-03): DEC-005 verification
+- `python -m pytest tests/ -q -p no:cacheprovider -rs`: 97 passed, 1 skipped (`test_symlink_escape_rejected`: symlink creation not permitted), 85.10 s.
+- Real-execution tests (Chromium + Node + git apply): `test_full_real_e2e_workflow` (passes; reproduction screenshot hash unchanged after verification; separate verification screenshot; bundle valid), `test_failed_patch_cannot_succeed_and_regression_is_not_run` (UNRESOLVED, regression NOT_RUN), `test_regression_failure_blocks_success` (frozen PASSED, regression FAILED, UNRESOLVED), `test_missing_regression_configuration_is_not_run`, `test_unsupported_report_in_mock_mode_is_refused`.
+- Stubbed-verifier tests (NOT browser evidence): controller bypass/provenance (`test_controller_invariants.py`), regression mapping (`test_remediation_regression.py`), evidence tampering (`test_remediation_evidence.py`).
+- `python evals/run_eval.py`: MOCK_MODEL, 3/8 executed; see `evals/results/latest_run.json`.
+- Streamlit AppTest drive of `reproproof/ui/app.py`: full 4-stage mock flow reached `passes_frozen_test`, `evidence_valid: true`.

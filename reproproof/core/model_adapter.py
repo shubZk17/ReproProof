@@ -32,6 +32,14 @@ If the evidence is insufficient, report unresolved.
 Never claim the fix works. The verifier decides that."""
 
 
+# MOCK_MODEL is NOT an AI model. It returns a hand-written plan and a hand-written patch for
+# exactly one scripted scenario (inventory-demo, eval case DEV-01). Any other report gets an
+# explicit refusal instead of a plausible-looking plan, so mock runs cannot fake analysis.
+MOCK_SCRIPTED_REPORT = "Clicking Delete Widget B removes Widget A instead of Widget B."
+MOCK_PLAN_ID = "mock:hand-written-plan"
+MOCK_PATCH_ID = "mock:hand-written-patch"
+
+
 class MetaModelClient:
     """Client for Meta AI models with retry logic and offline mock capability."""
 
@@ -119,8 +127,16 @@ class MetaModelClient:
 
         if self.mock_mode:
             if mock_plan:
-                return mock_plan, f"{model_id}-mock", 50, 50
-            # Default deterministic mock plan for inventory demo
+                return mock_plan, MOCK_PLAN_ID, 0, 0
+            if report_text.strip() != MOCK_SCRIPTED_REPORT:
+                return ActionPlan(
+                    expected_behavior="UNKNOWN: MOCK_MODEL does not analyse bug reports.",
+                    clarification_question=(
+                        "MOCK_MODEL (no AI model) only supports the scripted demo report: "
+                        f"'{MOCK_SCRIPTED_REPORT}'. This report was not analysed. Set MODEL_API_KEY for live planning."
+                    ),
+                ), MOCK_PLAN_ID, 0, 0
+            # Hand-written plan for the scripted inventory-demo scenario
             plan = ActionPlan(
                 expected_behavior="Widget B is deleted while Widget A remains visible in the list.",
                 clarification_question=None,
@@ -133,7 +149,7 @@ class MetaModelClient:
                     {"action": "assert_text_hidden", "text": "Widget B"},
                 ],
             )
-            return plan, f"{model_id}-mock", 100, 80
+            return plan, MOCK_PLAN_ID, 0, 0
 
         # Live Meta AI call with OpenAI SDK
         messages = [
@@ -185,8 +201,8 @@ class MetaModelClient:
 
         if self.mock_mode:
             if mock_patch:
-                return mock_patch, f"{model_id}-mock", 100, 100
-            # Return a default mock patch
+                return mock_patch, MOCK_PATCH_ID, 0, 0
+            # Hand-written patch for the scripted inventory-demo scenario
             patch = PatchProposal(
                 explanation="Fix delete handler to target matching id instead of index 0.",
                 unified_diff=(
@@ -203,7 +219,7 @@ class MetaModelClient:
                 ),
                 target_files=["src/inventory.js"],
             )
-            return patch, f"{model_id}-mock", 150, 120
+            return patch, MOCK_PATCH_ID, 0, 0
 
         # Prepare source files summary
         source_dump = "\n\n".join(

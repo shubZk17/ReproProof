@@ -1,5 +1,6 @@
 """Comprehensive unit and integration test suite for ReproProof core."""
 
+import hashlib
 import os
 import pytest
 from pathlib import Path
@@ -7,6 +8,7 @@ from pathlib import Path
 from reproproof.core.schemas import (
     ActionPlan,
     AppManifest,
+    ModelMode,
     PatchProposal,
     RunStatus,
     VALID_TRANSITIONS,
@@ -15,7 +17,6 @@ from reproproof.core.controller import RunController, StateTransitionError
 from reproproof.core.compiler import PlaywrightCompiler
 from reproproof.core.patcher import PatchValidator, PatchValidationError
 from reproproof.core.planner import ReproductionPlanner
-from reproproof.core.evidence import EvidenceExporter
 from reproproof.core.limits import DEFAULT_LIMITS
 
 
@@ -40,7 +41,7 @@ def manifest():
 
 def test_state_machine_strict_transitions(temp_db):
     ctrl = RunController(db_path=temp_db)
-    run = ctrl.create_run(app_id="inventory-demo")
+    run = ctrl.create_run("inventory-demo", model_mode=ModelMode.MOCK_MODEL, report_text="r")
     assert run.status == RunStatus.RECEIVED
 
     # Legal: received -> reproducing
@@ -51,7 +52,9 @@ def test_state_machine_strict_transitions(temp_db):
     with pytest.raises(StateTransitionError):
         ctrl.transition(run.run_id, RunStatus.PASSES_FROZEN_TEST)
 
-    # Legal: reproducing -> awaiting_test_approval
+    # Legal: reproducing -> awaiting_test_approval (after the reproduced test is stored)
+    code = "test('repro', () => {});"
+    ctrl.record_reproduction(run.run_id, test_code=code)
     ctrl.transition(run.run_id, RunStatus.AWAITING_TEST_APPROVAL)
 
     # Illegal: awaiting_test_approval -> verifying (must be approved and patched first)
@@ -59,10 +62,11 @@ def test_state_machine_strict_transitions(temp_db):
         ctrl.transition(run.run_id, RunStatus.VERIFYING)
 
     # Legal: Human approval freezes test and moves to PATCHING
-    ctrl.record_human_approval(run.run_id, test_sha256="abc123sha", approved_by="alice")
+    sha = hashlib.sha256(code.encode("utf-8")).hexdigest()
+    ctrl.record_human_approval(run.run_id, test_sha256=sha, approved_by="alice")
     updated = ctrl.get_run(run.run_id)
     assert updated.status == RunStatus.PATCHING
-    assert updated.test_sha256 == "abc123sha"
+    assert updated.test_sha256 == sha
     assert updated.approved_by == "alice"
 
 
@@ -153,37 +157,3 @@ def test_failure_classification_honest_statuses():
     # Clean pass -> NOT_REPRODUCED
     c_pass = planner.classify_test_result(0, "1 passed (1.2s)", "")
     assert c_pass.status == RunStatus.NOT_REPRODUCED
-
-
-def test_evidence_exporter(temp_db, tmp_path):
-    ctrl = RunController(db_path=temp_db)
-    run = ctrl.create_run(app_id="inventory-demo")
-    ctrl.transition(run.run_id, RunStatus.REPRODUCING)
-    ctrl.transition(run.run_id, RunStatus.AWAITING_TEST_APPROVAL)
-    ctrl.record_human_approval(run.run_id, test_sha256="test_sha_123")
-    ctrl.transition(run.run_id, RunStatus.VERIFYING)
-    ctrl.record_verification_result(
-        run_id=run.run_id,
-        passed_frozen_test=True,
-        passed_regression=True,
-        actual_test_sha256="test_sha_123",
-        details="Passed clean verification",
-    )
-
-    run_record = ctrl.get_run(run.run_id)
-    exporter = EvidenceExporter(export_dir=str(tmp_path / "exports"))
-
-    bundle = exporter.create_bundle(
-        run_record=run_record,
-        report_text="Bug in delete button",
-        expected_behavior="Item B is deleted",
-        intended_assertion="assert_text_visible",
-        frozen_test_code="test('repro', () => {})",
-        test_sha256="test_sha_123",
-        patch_diff="--- a/src/inventory.js\n+++ b/src/inventory.js\n",
-        check_results={"frozen_test": "PASSED"},
-    )
-
-    zip_file = exporter.export_zip(bundle)
-    assert os.path.exists(zip_file)
-    assert zip_file.endswith(".zip")

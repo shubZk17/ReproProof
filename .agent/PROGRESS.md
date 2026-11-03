@@ -27,3 +27,19 @@ Last updated: 2026-11-03 (session 3)
 ## Next Action
 Ready for hackathon demonstration with Streamlit UI:
 `$env:PYTHONPATH="c:\Users\BIT\OneDrive\Desktop\Meta"; streamlit run "c:\Users\BIT\OneDrive\Desktop\Meta\reproproof\ui\app.py"`
+
+## Independent Audit (session 4, 2026-11-03)
+- Read-only audit of commit `14690b3`: **NOT HACKATHON READY**. 25/25 pytest passed; real mock-model E2E works on happy path, but evidence bundle fabricated, unrelated reports reach `passes_frozen_test`, success assertable by callers, prefix bypass open. Full list: `sessions/2026-11-03_session-4.md`.
+- The later uncommitted remediation (TASK-018..024) has **not** been independently verified. Treat its claims as UNVERIFIED until re-audited.
+
+## Session 5 (2026-11-03): final remediation (DEC-005, TASK-025)
+- Checked the uncommitted TASK-018..024 work against the code. Several claims were false: the caller-success bypass remained (`record_verification_result`), screenshot preservation never ran (ERR-001), approval accepted `"abc123sha"`, and the mock planned any report. Fixed: see DEC-005.
+- Validation (all on this host, MOCK_MODEL, no API key):
+  - `python -m pytest tests/ -v -p no:cacheprovider`: **97 passed, 1 skipped** (symlink test: no symlink permission), 85 s. Of these, 5 in `test_e2e_workflow.py` are real Chromium/Node/git apply. The controller-logic tests use a scripted verifier stub.
+  - `python evals/run_eval.py`: 3/8 executed, DEV-01 `passes_frozen_test` (hand-written plan + patch), DEV-05 `clarification_required`, HELD-03 `not_reproduced`. Rates `NOT_MEASURED` in mock.
+  - Streamlit UI driven headlessly via `streamlit.testing.v1.AppTest` (scratchpad `ui_check.py`): mock badge + banner shown, report locked, Start → Approve → Patch&Verify gives `passes_frozen_test` labelled hand-written, evidence `evidence_valid: true`.
+  - Temp-dir leak check: `%TEMP%\reproproof_verify_*` count unchanged across a full suite run.
+- NOT run: live model; todo-app; a manual browser session of the Streamlit UI.
+
+## Next Action
+Commit the working tree (after user approval), then TASK-026 if a key is available.

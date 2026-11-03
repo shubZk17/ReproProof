@@ -3,6 +3,7 @@
 Enforces:
 - R7: Source-only patching (no tests, no package.json, no configs).
 - Strict path boundaries: Rejects traversal (..), symlinks, and absolute paths.
+- Rejects allowed-path prefix bypass (e.g. srcX/evil.js when src/ is allowed).
 - Reliable patch application: Uses `git apply --check` and `git apply`.
 - Hard Rule: Never falls back to blind line-number deletion or insertion.
 """
@@ -18,6 +19,7 @@ from typing import Dict, List, Optional, Set
 
 from reproproof.core.schemas import AppManifest, PatchProposal
 from reproproof.core.limits import DEFAULT_LIMITS, RunLimits
+from reproproof.core.proc_utils import force_rmtree
 
 
 class PatchValidationError(Exception):
@@ -58,8 +60,13 @@ class PatchValidator:
 
     def check_path_safety(self, base_dir: Optional[str], rel_path: str) -> str:
         """Checks for path traversal, absolute paths, and symlink escapes."""
-        # 1. Absolute path check
-        if os.path.isabs(rel_path) or (len(rel_path) > 1 and rel_path[1] == ":") or rel_path.startswith("/") or rel_path.startswith("\\"):
+        # 1. Absolute path check (Unix absolute, Windows drive letter, leading slashes/backslashes)
+        if (
+            os.path.isabs(rel_path)
+            or (len(rel_path) > 1 and rel_path[1] == ":")
+            or rel_path.startswith("/")
+            or rel_path.startswith("\\")
+        ):
             raise PatchValidationError(f"Absolute path detected in patch: '{rel_path}'")
 
         # 2. Path traversal check (check both raw components and normalized)
@@ -74,6 +81,13 @@ class PatchValidator:
         if base_dir and os.path.exists(base_dir):
             real_base = os.path.realpath(os.path.abspath(base_dir))
             full_path = os.path.realpath(os.path.abspath(os.path.join(base_dir, norm)))
+            try:
+                common = os.path.commonpath([real_base, full_path])
+                if common != real_base:
+                    raise PatchValidationError(f"Path escapes base directory: '{rel_path}'")
+            except ValueError:
+                raise PatchValidationError(f"Path escapes base directory: '{rel_path}'")
+
             if not (full_path == real_base or full_path.startswith(real_base + os.sep)):
                 raise PatchValidationError(f"Path escapes base directory: '{rel_path}'")
 
@@ -140,11 +154,14 @@ class PatchValidator:
                         f"Patch touches forbidden protected path: '{file_path}' (rule H-7: source-only patching)."
                     )
 
-            # 3. Must be within allowed_source_paths
+            # 3. Must be strictly within allowed_source_paths (no prefix bypass like srcX/evil.js)
             is_allowed = False
+            clean_path = norm_path.replace("\\", "/").lstrip("/")
             for allowed in self.manifest.allowed_source_paths:
-                norm_allowed = os.path.normpath(allowed).replace("\\", "/")
-                if norm_path.startswith(norm_allowed):
+                is_dir = allowed.replace("\\", "/").endswith("/")
+                clean_allowed = allowed.replace("\\", "/").strip("/")
+                # Directory entries ("src/") match only strictly inside the boundary; file entries match exactly.
+                if clean_path.startswith(clean_allowed + "/") or (not is_dir and clean_path == clean_allowed):
                     is_allowed = True
                     break
 
@@ -153,13 +170,33 @@ class PatchValidator:
                     f"File '{file_path}' is outside allowed source paths: {self.manifest.allowed_source_paths}."
                 )
 
+            # 4. Canonical path check against allowed_source_paths if base_dir exists
+            if base_dir and os.path.exists(base_dir):
+                target_canonical = os.path.realpath(os.path.abspath(os.path.join(base_dir, norm_path)))
+                canon_allowed = False
+                for allowed in self.manifest.allowed_source_paths:
+                    allowed_clean = allowed.replace("\\", "/").strip("/")
+                    allowed_full = os.path.realpath(os.path.abspath(os.path.join(base_dir, allowed_clean)))
+                    try:
+                        common = os.path.commonpath([allowed_full, target_canonical])
+                        if common == allowed_full:
+                            canon_allowed = True
+                            break
+                    except ValueError:
+                        pass
+                if not canon_allowed:
+                    raise PatchValidationError(
+                        f"File '{file_path}' resolves outside canonical allowed source paths."
+                    )
+
         return touched
 
-    def apply_diff_to_directory(self, target_dir: str, unified_diff: str) -> None:
+    def apply_diff_to_directory(self, target_dir: str, unified_diff: str) -> str:
         """Applies a validated unified diff to target_dir using git apply.
 
         Hard Rule: Never falls back to blind line-number deletion or insertion.
         If git apply fails due to context mismatch or corrupt patch, raises PatchValidationError.
+        Returns the command output from git apply.
         """
         # First validate paths against target_dir
         proposal = PatchProposal(explanation="Validation check", unified_diff=unified_diff)
@@ -174,11 +211,11 @@ class PatchValidator:
         git_dir = os.path.join(target_dir, ".git")
         had_git = os.path.exists(git_dir)
         if not had_git:
-            subprocess.run(["git", "init", "-q"], cwd=target_dir, check=True)
-            subprocess.run(["git", "config", "user.name", "ReproProof"], cwd=target_dir, check=True)
-            subprocess.run(["git", "config", "user.email", "reproproof@example.local"], cwd=target_dir, check=True)
-            subprocess.run(["git", "add", "."], cwd=target_dir, check=True)
-            subprocess.run(["git", "commit", "-qm", "temp-baseline"], cwd=target_dir, check=True)
+            subprocess.run(["git", "init", "-q"], cwd=target_dir, check=True, capture_output=True)
+            subprocess.run(["git", "config", "user.name", "ReproProof"], cwd=target_dir, check=True, capture_output=True)
+            subprocess.run(["git", "config", "user.email", "reproproof@example.local"], cwd=target_dir, check=True, capture_output=True)
+            subprocess.run(["git", "add", "."], cwd=target_dir, check=True, capture_output=True)
+            subprocess.run(["git", "commit", "-qm", "temp-baseline"], cwd=target_dir, check=True, capture_output=True)
 
         with tempfile.NamedTemporaryFile("w", suffix=".diff", delete=False, encoding="utf-8") as f:
             f.write(normalized_diff)
@@ -211,9 +248,12 @@ class PatchValidator:
                 err_msg = apply_proc.stderr.strip() or apply_proc.stdout.strip()
                 raise PatchValidationError(f"Git apply execution failed: {err_msg}")
 
+            apply_output = (apply_proc.stdout + "\n" + apply_proc.stderr).strip() or "Patch applied cleanly via git apply."
+            return apply_output
+
         finally:
             if os.path.exists(diff_file_path):
                 os.remove(diff_file_path)
             # Remove transient .git folder if we initialized it
             if not had_git and os.path.exists(git_dir):
-                shutil.rmtree(git_dir, ignore_errors=True)
+                force_rmtree(git_dir)

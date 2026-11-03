@@ -1,122 +1,110 @@
 # 🛡️ ReproProof
 
-> **Autonomous bug reproduction, frozen browser tests, source-only repair, and fresh-copy verification.**  
-> Built for the **Meta Global AI Developer Hackathon (Indie Developer Track)**.
+> **Bug reproduction as a frozen browser test, a human approval gate, source-only repair, and fresh-copy checking.**
+> Built for the **Meta Global AI Developer Hackathon (Indie Developer Track)**. Hackathon MVP, **not production software**.
 
 ---
 
 ## 💡 The Core Idea
 
-When a software bug is reported, AI code models typically jump straight to modifying code without proving the bug exists or proving the fix works.
+AI code models usually change code without proving the bug exists or that the fix works. ReproProof puts a controller between the model and the codebase:
 
-**ReproProof introduces an audit-grade contract:**
-1. **Constrained Reproduction:** The model turns a user report and screenshot into an executable browser test (using Playwright).
-2. **Human-in-the-Loop Freeze:** A human inspects the failing assertion and screenshot. If approved, the test is **frozen** (cryptographically hashed with SHA-256) and stored outside the model's writable tree. **No patch model may be invoked before human approval.**
-3. **Source-Only Repair:** The model proposes a minimal source patch. The controller strictly rejects any changes to tests, runner configs, or dependency manifests.
-4. **Clean Verification (`passes_frozen_test`):** The patch is applied to a **fresh temporary copy** of the application. The system executes the byte-identical frozen test (verifying the SHA-256 hash matches) and runs protected regression suites.
-5. **Honest Statuses:** The word *"verified"* is never used as a status. Only when both the frozen test and regression suite pass on a clean copy is `passes_frozen_test` granted.
+1. **Constrained reproduction:** a plan (from the model, or a hand-written template in mock mode) is compiled into a data-driven Playwright test and run in real Chromium against the app.
+2. **Human approval freeze:** a human approves the exact test that ran. The controller binds approval to that stored test and its SHA-256; nothing else can be approved. No patch is requested before approval.
+3. **Source-only repair:** patches may touch only the manifest's allowed source paths (no tests, configs, manifests; ≤200 lines, ≤5 files), applied with `git apply`.
+4. **Fresh-copy check (`passes_frozen_test`):** the controller itself runs the verifier on a fresh copy of the app with the stored patch, runs the byte-identical frozen test and the protected regression suite, and checks the result's provenance (run id, test hash, patch hash, source-tree hash). `passes_frozen_test` requires frozen test `PASSED` **and** regression `PASSED`. There is no API that accepts a caller-supplied success flag.
+5. **Evidence bundle:** built only from the stored run record and on-disk artifacts, each re-hashed. Missing or tampered artifacts are reported as `MISSING` / `FAILED` / `CORRUPTED` and the bundle is marked `evidence_valid: false`.
+
+```
+[ 1. Report ] ──► [ 2. Reproduce ] ──► [ Human Approval ] ──► [ 3. Repair ] ──► [ 4. Check ]
+                  real Chromium run     freezes stored test     git apply on      frozen test + regression
+                                        (SHA-256 bound)          fresh copy        suite, provenance checked
+```
+
+State machine and transitions: [docs/architecture.md](docs/architecture.md).
 
 ---
 
-## 🏗️ Architecture & 4-Stage Workflow
+## ⚠️ What this demo does and does not prove
 
-```
-[ 1. Report ] ──► [ 2. Reproduce ] ──► [ Human Approval Gate ] ──► [ 3. Repair ] ──► [ 4. Check ]
- User report &     Playwright test       Approves & freezes test     Source patch      Clean copy runs
- screenshot        synthesized           with SHA-256 hash           proposed          frozen test & regression
-```
+| | Status |
+|---|---|
+| Real Chromium (Playwright) reproduction and checking on ephemeral ports | **Genuinely executed** (tests + demo) |
+| `git apply` on a fresh temporary app copy; protected regression suite | **Genuinely executed** |
+| Controller rejects forged approval / verification / foreign evidence | **Tested** (`tests/test_controller_invariants.py`) |
+| Evidence bundle flags tampered or missing artifacts | **Tested** (`tests/test_remediation_evidence.py`) |
+| AI-generated plans or patches | **NOT demonstrated.** No live-model run has been recorded. |
+| Repair rate of an AI model | **NOT measured** |
+| False-success rate | **NOT measured** (hidden checks in `evals/hidden/` are never executed) |
+| Sandboxing | **None.** See execution boundary below. |
+| Second allowlisted app (`todo-app`) and 5 of 8 eval cases | **NOT run** |
 
-For the complete state machine and transition rules, see [docs/architecture.md](docs/architecture.md).
+### Mock mode (default without `MODEL_API_KEY`)
+- **`MOCK_MODEL` is not an AI model.** It returns a **hand-written plan and a hand-written patch** (`reproproof/core/model_adapter.py`) for exactly one scripted report on `inventory-demo` (eval case DEV-01): *"Clicking Delete Widget B removes Widget A instead of Widget B."*
+- Any other report is refused with `clarification_required` and an explicit "not analysed" reason, so mock mode cannot produce a plausible success for an unrelated report.
+- The mode is stored on every run, shown as a badge and banner in the UI, written into every evidence bundle with a disclosure, and labelled in eval results. The UI locks the report box in mock mode.
 
----
-
-## 🔒 Security, Isolation, & Model Policy
-
-- **Isolation Boundary Notice:** ReproProof creates temporary directory copies of allowlisted applications to test patches. **This temporary-copy approach is designed for filesystem isolation and replay reproducibility, not as an OS-level security sandbox.**
-- **Secret Hygiene:** `MODEL_API_KEY` is loaded from the environment and is never written to repositories, databases, logs, screenshots, or runner processes.
-- **Model Escalation:**
-  - **Attempt 1:** Default model `muse-spark-1.3` on Meta AI endpoint (`https://api.meta.ai/v1`).
-  - **Attempt 2:** Escalates to `muse-wonder-1.0` if attempt 1 fails fresh verification.
-- **Offline / Deterministic Mode:** If `MODEL_API_KEY` is not provided, ReproProof runs seamlessly in offline mock mode for deterministic development and automated testing.
+### Execution boundary (no sandbox)
+- Patched apps and tests run **as the logged-in OS user**, with that user's filesystem and network access. The temporary copy, ephemeral port and scrubbed environment (`MODEL_API_KEY` and token-like variables removed) are **not** a sandbox.
+- So only trusted, allowlisted demo apps (`apps/manifests/`) are run, and in mock mode only the hand-written patch runs.
+- **Model-generated (`LIVE_MODEL`) patches are not executed** on the host: the run ends `unresolved` with the patch recorded for human review. An operator can opt in on a disposable machine with `REPROPROOF_ALLOW_UNSANDBOXED_HOST_EXECUTION=1`. Don't do this on a machine with credentials or sensitive files.
+- Navigation is limited to same-origin relative paths (schema validation plus a runtime origin check in the test driver).
 
 ---
 
 ## 🚀 Quick Start
 
-### 1. Requirements
-- Python ≥ 3.11
-- Node.js ≥ 18 & npm
+Requirements: Python ≥ 3.11, Node.js ≥ 18, npm.
 
-### 2. Setup
 ```bash
-# Clone the repository
-git clone https://github.com/your-username/reproproof.git
-cd reproproof
-
-# Install Python dependencies
 pip install -r requirements.txt
-
-# (Optional) Install Playwright browser
+npm install
 npx playwright install chromium
+
+# Optional, live model planning (patches still not executed, see above):
+# set MODEL_API_KEY in the environment
+
+streamlit run reproproof/ui/app.py      # http://localhost:8501
 ```
 
-### 3. Environment Configuration
-```bash
-cp .env.example .env
-# Edit .env and enter your Meta AI API key:
-# MODEL_API_KEY=your_key_here
-```
-
-### 4. Launch the Interactive Dashboard
-```bash
-streamlit run reproproof/ui/app.py
-```
-Open your browser to `http://localhost:8501`.
+Demo script (mock mode): **Start Reproduction** → review the test and the failing assertion → **Approve Test** → **Generate Patch & Verify on Clean Copy** → download the evidence bundle.
 
 ---
 
-## 📊 Benchmark Evaluation Results
+## 📊 Evaluation
 
-Run the full 8-case benchmark against hidden ground-truth assertions:
 ```bash
-python evals/run_eval.py
+python evals/run_eval.py     # writes evals/results/latest_run.json
 ```
 
-### Measured Performance (Honest Benchmark Evaluation)
-| Metric | Target | Measured Result | Notes |
-|---|---|---|---|
-| **False Success Rate** | 0.0% | **0 / 1 (0.0%)** | Zero false successes on clean copy verification |
-| **Control Handling** | 100% | **2 / 2 (100.0%)** | Ambiguous -> `clarification_required`; false report -> `not_reproduced` |
-| **Reproduction Rate** | ≥ 1 / 1 | **1 / 1 (100.0%)** | Defect case reproduced via genuine Playwright execution |
-| **Repair Rate** | ≥ 1 / 1 | **1 / 1 (100.0%)** | Fresh-copy verification achieved `passes_frozen_test` |
-| **Unexecuted Scope** | Report | **5 / 8 marked NOT RUN** | Scoped out of hackathon MVP (single-app focus) |
-| **Median Duration** | Report | **3.58s** | Measured Playwright execution runtime across cases |
+Last run (2026-11-03, `MOCK_MODEL`): 3 of 8 cases executed, 5 `NOT RUN`.
 
-Full methodology and honest results are documented in [docs/evaluation.md](docs/evaluation.md).
+| Case | Input | Result |
+|---|---|---|
+| DEV-01 | hand-written plan + hand-written patch | `passes_frozen_test` (real Chromium, git apply, regression suite) |
+| DEV-05 (ambiguous) | hand-written clarification plan from the harness | `clarification_required` (shows only that the controller halts) |
+| HELD-03 (false report) | hand-written plan | `not_reproduced` (real Chromium run; test passes) |
+
+Reproduction and repair rates are reported as `NOT_MEASURED` in mock mode. Details: [docs/evaluation.md](docs/evaluation.md).
+
+---
+
+## 🧪 Tests
+
+```bash
+python -m pytest tests/ -v
+```
+98 tests (97 pass, 1 skipped: the symlink-escape test needs symlink permission on Windows). `tests/test_e2e_workflow.py` uses real Chromium and a real Node server. Controller-logic tests in `tests/test_controller_invariants.py` and `tests/test_remediation_regression.py` replace browser execution with a scripted verifier stub, so they are **not** evidence of browser execution.
 
 ---
 
 ## 📦 Allowlisted Applications
 
-1. **Warehouse Inventory Demo (`inventory-demo`)**:
-   - Seeded web app with wrong-row deletion bug (`deleteItem` removes index 0 instead of matching ID).
-   - Manifest: `apps/manifests/inventory-demo.yaml`.
-2. **Pinned TodoMVC (`todo-app`)**:
-   - Pinned micro-task application testing filter interaction defects.
-   - Manifest: `apps/manifests/todo-app.yaml`.
-   - Licensed under the MIT License (see `THIRD_PARTY_NOTICES.md`).
-
----
-
-## 🧪 Running Tests
-
-```bash
-# Run core test suite
-python -m pytest tests/ -v
-```
+1. **Warehouse Inventory Demo (`inventory-demo`)**: seeded wrong-row deletion bug. Manifest `apps/manifests/inventory-demo.yaml`. The only app exercised by the demo and tests.
+2. **Pinned TodoMVC (`todo-app`)**: MIT licensed (see `THIRD_PARTY_NOTICES.md`). Manifest present; **not run**, and it has no regression suite configured.
 
 ---
 
 ## 📜 Attribution & Third-Party Notices
 
-All core algorithms, state controllers, Playwright compilers, and evaluators were built during the Meta Global AI Developer Hackathon. See [docs/hackathon-contributions.md](docs/hackathon-contributions.md) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for full licensing details.
+See [docs/hackathon-contributions.md](docs/hackathon-contributions.md) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

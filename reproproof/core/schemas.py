@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -24,6 +25,20 @@ class RunStatus(str, Enum):
     PASSES_FROZEN_TEST = "passes_frozen_test"
     UNRESOLVED = "unresolved"
     BUDGET_EXCEEDED = "budget_exceeded"
+
+
+class ModelMode(str, Enum):
+    """Explicit model execution mode tracking."""
+    LIVE_MODEL = "LIVE_MODEL"
+    MOCK_MODEL = "MOCK_MODEL"
+
+
+class RegressionStatus(str, Enum):
+    """Explicit regression execution outcome semantics."""
+    PASSED = "PASSED"
+    FAILED = "FAILED"
+    NOT_RUN = "NOT_RUN"
+    ERROR = "ERROR"
 
 
 # Valid state machine transitions per PRD §State machine
@@ -88,6 +103,9 @@ ALLOWED_ROLES = {
 }
 
 
+_SAFE_PATH_RE = re.compile(r"/(?![/\\])[A-Za-z0-9\-._~!$&'()*+,;=@%/?#]*")
+
+
 class ActionStep(BaseModel):
     """Single step proposed by the model with strict security validation."""
     model_config = ConfigDict(extra="forbid")
@@ -104,10 +122,14 @@ class ActionStep(BaseModel):
     @field_validator("path")
     @classmethod
     def validate_path(cls, v: Optional[str]) -> Optional[str]:
+        # Single leading '/', then only printable URL characters. Rejects '//', '/\', schemes (':'),
+        # backslashes, whitespace and control chars (the URL parser strips tab/newline, so
+        # '/<TAB>/evil.example' would otherwise become protocol-relative '//evil.example').
         if v is not None:
-            # Must be a relative path starting with /; no protocol schemes or javascript:
-            if not v.startswith("/") or ":" in v:
-                raise ValueError("Path must be a relative URL starting with '/' and cannot contain ':' or protocol schemes.")
+            if not _SAFE_PATH_RE.fullmatch(v):
+                raise ValueError(
+                    "Path must be a relative URL starting with a single '/' and cannot contain ':', '\\\\', or protocol-relative schemes."
+                )
         return v
 
     @field_validator("role")
@@ -188,6 +210,19 @@ class RunRecord(BaseModel):
     plan_json: Optional[str] = None
     patch_diff: Optional[str] = None
     verification_evidence: Optional[str] = None
+    model_mode: ModelMode
+    regression_status: RegressionStatus = RegressionStatus.NOT_RUN
+    report_text: Optional[str] = None
+    reproduced_test_code: Optional[str] = None
+    reproduced_test_sha256: Optional[str] = None
+    patch_application_output: Optional[str] = None
+    reproduction_logs: Optional[str] = None
+    reproduction_screenshot_path: Optional[str] = None
+    reproduction_screenshot_timestamp: Optional[str] = None
+    reproduction_screenshot_sha256: Optional[str] = None
+    verification_screenshot_path: Optional[str] = None
+    verification_screenshot_timestamp: Optional[str] = None
+    verification_screenshot_sha256: Optional[str] = None
     created_at: str
     updated_at: str
     status_reason: Optional[str] = None
@@ -207,14 +242,16 @@ class PatchProposal(BaseModel):
 # --- Evidence Bundle ---
 
 class EvidenceBundle(BaseModel):
-    """R9 evidence bundle contract."""
+    """R9 evidence bundle. Built only by EvidenceExporter.create_bundle_from_run from the run record."""
     bundle_id: str
     run_id: str
     app_id: str
     report_text: str
-    screenshot_filename: Optional[str] = None
     expected_behavior: str
+    plan_json: Optional[str] = None
     model_ids: List[str]
+    model_mode: ModelMode
+    model_mode_disclosure: str
     source_revision: Optional[str] = None
     patched_revision: Optional[str] = None
     test_sha256: str
@@ -222,9 +259,21 @@ class EvidenceBundle(BaseModel):
     intended_assertion: str
     before_screenshot_b64: Optional[str] = None
     after_screenshot_b64: Optional[str] = None
+    reproduction_screenshot_sha256: Optional[str] = None
+    verification_screenshot_sha256: Optional[str] = None
+    reproduction_screenshot_timestamp: Optional[str] = None
+    verification_screenshot_timestamp: Optional[str] = None
     patch_diff: Optional[str] = None
+    patch_application_output: Optional[str] = None
+    reproduction_logs: Optional[str] = None
+    verification_evidence: Optional[Dict[str, Any]] = None
     check_results: Dict[str, Any] = Field(default_factory=dict)
-    rejected_attempts: List[Dict[str, Any]] = Field(default_factory=list)
     usage: UsageRecord
     final_status: RunStatus
-    created_at: str
+    regression_status: RegressionStatus
+    human_approval: Optional[Dict[str, Any]] = None
+    artifacts_integrity: Dict[str, str] = Field(default_factory=dict)
+    evidence_valid: bool
+    integrity_failures: List[str] = Field(default_factory=list)
+    run_created_at: str
+    run_updated_at: str

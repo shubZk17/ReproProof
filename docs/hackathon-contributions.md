@@ -15,7 +15,7 @@ The entirety of the ReproProof core architecture, controller state machine, mode
   - `reproproof/core/compiler.py`: Safe compilation of constrained action schemas to executable Playwright JavaScript tests with intended assertion markers.
   - `reproproof/core/patcher.py`: Source-only patch validator enforcing manifest path bounds and rejecting modifications to tests, package files, or configs.
   - `reproproof/core/verifier.py`: Isolated fresh-copy verification checking byte-identical test hashes and running protected regression suites.
-  - `reproproof/core/evidence.py`: Exporter generating tamper-evident ZIP evidence bundles with SHA-256 signatures, screenshots, and logs.
+  - `reproproof/core/evidence.py`: Exporter building ZIP evidence bundles from the stored run record, re-hashing artifacts (SHA-256 hashes, not signatures) and flagging missing/tampered ones.
 - **Seeded Demo Application:**
   - `apps/demo-app/`: Warehouse Inventory application with a seeded wrong-row deletion bug (`deleteItem` splicing index 0).
 - **Harness & UI:**

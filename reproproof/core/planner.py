@@ -25,6 +25,21 @@ from reproproof.core.model_adapter import MetaModelClient
 from reproproof.core.compiler import PlaywrightCompiler
 
 
+DEFAULT_MANIFESTS_DIR = str(Path(__file__).resolve().parent.parent.parent / "apps" / "manifests")
+
+
+def load_manifest(app_id: str, manifests_dir: Optional[str] = None) -> AppManifest:
+    """Loads and strictly validates an allowlisted app manifest from YAML (H-12)."""
+    if not app_id or not all(c.isalnum() or c in "-_" for c in app_id):
+        raise ValueError(f"Invalid app_id: {app_id!r}")
+    manifest_path = os.path.join(manifests_dir or DEFAULT_MANIFESTS_DIR, f"{app_id}.yaml")
+    if not os.path.exists(manifest_path):
+        raise ValueError(f"App '{app_id}' is not in the allowlisted manifests ({manifest_path} not found).")
+    with open(manifest_path, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+    return AppManifest.model_validate(data)
+
+
 class FailureClassification:
     """Outcome of analyzing test runner execution results."""
     def __init__(
@@ -46,24 +61,12 @@ class ReproductionPlanner:
     """Intake, planning, and failure classification orchestrator."""
 
     def __init__(self, manifests_dir: Optional[str] = None, model_client: Optional[MetaModelClient] = None):
-        if manifests_dir is None:
-            repo_root = Path(__file__).resolve().parent.parent.parent
-            self.manifests_dir = str(repo_root / "apps" / "manifests")
-        else:
-            self.manifests_dir = manifests_dir
+        self.manifests_dir = manifests_dir or DEFAULT_MANIFESTS_DIR
         self.model_client = model_client or MetaModelClient()
         self.compiler = PlaywrightCompiler()
 
     def load_manifest(self, app_id: str) -> AppManifest:
-        """Loads and strictly validates an app manifest from YAML."""
-        manifest_path = os.path.join(self.manifests_dir, f"{app_id}.yaml")
-        if not os.path.exists(manifest_path):
-            raise ValueError(f"App '{app_id}' is not in the allowlisted manifests ({manifest_path} not found).")
-
-        with open(manifest_path, "r", encoding="utf-8") as f:
-            data = yaml.safe_load(f)
-
-        return AppManifest.model_validate(data)
+        return load_manifest(app_id, self.manifests_dir)
 
     def plan(
         self,
