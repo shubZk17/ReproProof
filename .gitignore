@@ -66,3 +66,6 @@ Thumbs.db
 
 # Project docs (local only)
 docs/
+
+# Product requirements (local only)
+PRD.md
