@@ -11,6 +11,9 @@ import glob
 import json
 import os
 import streamlit as st
+from dotenv import load_dotenv
+
+load_dotenv()  # entry point only: picks up MODEL_API_KEY from a local, gitignored .env
 import yaml
 
 from reproproof.core.controller import RunController

@@ -40,6 +40,21 @@ MOCK_PLAN_ID = "mock:hand-written-plan"
 MOCK_PATCH_ID = "mock:hand-written-patch"
 
 
+def _parse_model_json(content: Optional[str]) -> Dict[str, Any]:
+    """Parse a model's JSON reply: strip a ```json fence and treat empty-string step fields as absent.
+    Validation itself (ARIA allowlist, safe paths) is unchanged; "" just means "not given"."""
+    text = (content or "").strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[1] if "\n" in text else ""
+        text = text.rsplit("```", 1)[0]
+    data = json.loads(text)
+    for key in ("steps", "assertions"):
+        if isinstance(data.get(key), list):
+            data[key] = [{k: v for k, v in step.items() if v != ""} if isinstance(step, dict) else step
+                         for step in data[key]]
+    return data
+
+
 class MetaModelClient:
     """Client for Meta AI models with retry logic and offline mock capability."""
 
@@ -177,8 +192,7 @@ class MetaModelClient:
             return response
 
         res = self.execute_with_retry(_call)
-        content = res.choices[0].message.content
-        data = json.loads(content)
+        data = _parse_model_json(res.choices[0].message.content)
         plan = ActionPlan.model_validate(data)
         in_tokens = res.usage.prompt_tokens if res.usage else 0
         out_tokens = res.usage.completion_tokens if res.usage else 0
@@ -251,8 +265,7 @@ class MetaModelClient:
             return response
 
         res = self.execute_with_retry(_call)
-        content = res.choices[0].message.content
-        data = json.loads(content)
+        data = _parse_model_json(res.choices[0].message.content)
         patch = PatchProposal.model_validate(data)
         in_tokens = res.usage.prompt_tokens if res.usage else 0
         out_tokens = res.usage.completion_tokens if res.usage else 0

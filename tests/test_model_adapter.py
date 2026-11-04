@@ -64,3 +64,15 @@ def test_meta_model_client_mock():
     )
     assert isinstance(patch, PatchProposal)
     assert len(patch.target_files) == 1
+
+
+def test_parse_model_json_tolerates_fences_and_empty_fields():
+    from reproproof.core.model_adapter import _parse_model_json
+    raw = ('```json\n{"expected_behavior": "B removed", "clarification_question": null,'
+           ' "steps": [{"action": "goto", "path": "/", "role": "", "name": "", "value": ""}],'
+           ' "assertions": [{"action": "assert_text_hidden", "text": "Widget B", "role": ""}]}\n```')
+    plan = ActionPlan.model_validate(_parse_model_json(raw))
+    assert plan.steps[0].role is None and plan.steps[0].path == "/"
+    # Non-empty invalid values are still rejected by the schema.
+    with pytest.raises(Exception):
+        ActionPlan.model_validate(_parse_model_json(raw.replace('"role": ""', '"role": "evil"', 1)))

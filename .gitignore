@@ -69,3 +69,6 @@ docs/
 
 # Product requirements (local only)
 PRD.md
+
+# Agent config (local only)
+CLAUDE.md
